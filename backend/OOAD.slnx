@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/OOAD.API/OOAD.API.csproj" />
+    <Project Path="src/OOAD.Application/OOAD.Application.csproj" />
+    <Project Path="src/OOAD.Domain/OOAD.Domain.csproj" />
+    <Project Path="src/OOAD.Infrastructure/OOAD.Infrastructure.csproj" />
+  </Folder>
+</Solution>
