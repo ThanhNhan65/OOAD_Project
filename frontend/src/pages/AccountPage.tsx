@@ -77,11 +77,38 @@ export function AccountPage() {
 
   if (!user) return null;
 
+  const roleTitles: Record<string, { title: string; desc: string; duty?: string }> = {
+    admin: {
+      title: 'Hồ sơ Quản trị viên (Admin Profile)',
+      desc: 'Thông tin tài khoản quản trị hệ thống DFGymCenter và bảo mật đăng nhập.',
+      duty: 'Toàn quyền cấu hình hệ thống, quản lý tài khoản người dùng, chi nhánh và các gói dịch vụ.',
+    },
+    receptionist: {
+      title: 'Hồ sơ Nhân viên Lễ tân (Staff Profile)',
+      desc: 'Thông tin nhân sự ca trực tại quầy lễ tân và bảo mật tài khoản.',
+      duty: 'Phụ trách tiếp đón hội viên, điểm danh check-in, cấp/khóa thẻ từ và tiếp nhận yêu cầu bảo lưu gói.',
+    },
+    trainer: {
+      title: 'Hồ sơ Huấn luyện viên (Trainer Profile)',
+      desc: 'Thông tin tài khoản HLV cá nhân và bảo mật đăng nhập.',
+      duty: 'Phụ trách giảng dạy lớp nhóm, huấn luyện PT 1-kèm-1 và cập nhật lịch rảnh.',
+    },
+    member: {
+      title: 'Hồ sơ Hội viên (Member Profile)',
+      desc: 'Thông tin tài khoản hội viên, thẻ thành viên và bảo mật cá nhân.',
+    },
+  };
+
+  const meta = roleTitles[user.role] || {
+    title: 'Hồ sơ cá nhân',
+    desc: 'Quản lý thông tin tài khoản và đổi mật khẩu bảo mật.',
+  };
+
   return (
     <>
       <PageHead
-        title="Tài khoản cá nhân"
-        desc="Quản lý thông tin tài khoản và đổi mật khẩu bảo mật."
+        title={meta.title}
+        desc={meta.desc}
       />
 
       <div className="grid g3">
@@ -95,15 +122,20 @@ export function AccountPage() {
             <Badge color={roleLabel[user.role][1]}>{roleLabel[user.role][0]}</Badge>
           </div>
           {branch && (
-            <div className="small muted mt8">
+            <div className="small muted mt12">
               Chi nhánh làm việc: <b>{branch.name}</b>
+            </div>
+          )}
+          {meta.duty && (
+            <div className="small dim mt12" style={{ padding: '8px 12px', background: 'var(--bg-subtle, rgba(255,255,255,0.04))', borderRadius: 8, textAlign: 'left', lineHeight: 1.4 }}>
+              <b>Nhiệm vụ & Quyền hạn:</b><br />{meta.duty}
             </div>
           )}
         </div>
 
         <div className="card span2">
           <div className="card-head">
-            <h2>Thông tin cá nhân</h2>
+            <h2>Thông tin chi tiết</h2>
           </div>
           <div className="form-grid">
             <div className="field">
@@ -118,9 +150,13 @@ export function AccountPage() {
               <label>Số điện thoại</label>
               <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </div>
+            <div className="field">
+              <label>Vai trò hệ thống</label>
+              <input className="input" value={roleLabel[user.role][0]} disabled />
+            </div>
             {branch && (
-              <div className="field">
-                <label>Chi nhánh được gán</label>
+              <div className="field full">
+                <label>Chi nhánh trực thuộc</label>
                 <input className="input" value={branch.name} disabled />
               </div>
             )}
