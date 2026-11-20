@@ -33,4 +33,12 @@ public interface ICheckinRepository : IGenericRepository<Checkin>
 
     /// <summary>Lấy tất cả lượt check-in chưa đóng để phục vụ Auto Check-out.</summary>
     Task<IReadOnlyList<Checkin>> GetAllOpenCheckinsWithBranchAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Lấy danh sách hội viên đã check-in tại chi nhánh trong khoảng thời gian (phục vụ đối chiếu điểm danh lớp nhóm).</summary>
+    Task<Dictionary<Guid, DateTime>> GetCheckedInMemberTimesOnDateAsync(
+        Guid branchId,
+        DateTime fromUtc,
+        DateTime toUtc,
+        IEnumerable<Guid> memberIds,
+        CancellationToken cancellationToken = default);
 }

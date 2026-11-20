@@ -61,7 +61,7 @@ export function MemberCardWidget({
             <div className="row" style={{ gap: 8 }}>
               <CreditCard size={20} style={{ opacity: 0.9 }} />
               <div className="brand-name">
-                OOAD<span style={{ color: '#ff8fb0' }}>Center</span>
+                DFGym<span style={{ color: '#ff8fb0' }}>Center</span>
               </div>
             </div>
             <div className="row" style={{ gap: 10 }}>

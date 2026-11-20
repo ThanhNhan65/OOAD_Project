@@ -160,7 +160,7 @@ export function Kiosk() {
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: 32 }}>
       <div className="row between mb16">
-        <div className="brand" style={{ padding: 0 }}><div className="brand-logo"><Zap size={22} color="#fff" fill="#fff" /></div><div><div className="brand-name">OOAD<span className="grad-text">Center</span></div><div className="brand-sub">Kiosk check-in</div></div></div>
+        <div className="brand" style={{ padding: 0 }}><div className="brand-logo"><Zap size={22} color="#fff" fill="#fff" /></div><div><div className="brand-name">DFGym<span className="grad-text">Center</span></div><div className="brand-sub">Kiosk check-in</div></div></div>
         <div className="row"><select className="input" value={br} onChange={(e) => setBr(e.target.value)} id="kiosk-branch">{db.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select><Link to="/login" className="btn"><ArrowLeft size={16} /> Thoát</Link></div>
       </div>
       <div className="card mb16 row"><span className="live-dot" /> <b>{L.presentCount(db, br)}</b> người đang tập tại {L.branchById(db, br)?.name} · Giờ mở cửa {L.branchById(db, br)?.openTime}–{L.branchById(db, br)?.closeTime}</div>

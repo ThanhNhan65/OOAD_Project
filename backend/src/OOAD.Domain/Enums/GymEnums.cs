@@ -12,7 +12,9 @@ public enum BookingStatus
     Confirmed = 2,
     Cancelled = 3,
     Attended = 4,
-    NoShow = 5
+    NoShow = 5,
+    LateCancelled = 6,
+    AutoCancelled = 7
 }
 
 public enum MembershipStatus

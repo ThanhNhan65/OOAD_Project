@@ -19,6 +19,7 @@ public class MembershipRepository : GenericRepository<Membership>, IMembershipRe
         return await _context.Memberships
             .AsNoTracking()
             .Include(m => m.Branch)
+            .Include(m => m.Plan)
                 .ThenInclude(p => p.PlanBranches)
             .Include(m => m.FreezeRequests)
             .Where(m => m.MemberId == memberId)

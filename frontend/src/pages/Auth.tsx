@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, Navigate } from 'react-router-dom';
 import { Mail, Lock, User as UserIcon, Phone, Zap, ArrowRight, ScanLine, Dumbbell, CalendarCheck, TrendingUp } from 'lucide-react';
 import { useApp } from '../store/AppContext';
@@ -6,6 +6,10 @@ import * as L from '../store/logic';
 import { homeOf } from '../components/Layout';
 import { Avatar, Badge } from '../components/ui';
 import { roleLabel } from '../components/labels';
+import { authService, type ApiUserDto } from '../api/auth.service';
+import { branchesApi } from '../api/branchesApi';
+import { isApiNetworkError } from '../api/apiClient';
+import type { User } from '../types';
 import hero from '../assets/gym-hero.jpg';
 
 function Hero() {
@@ -13,7 +17,7 @@ function Hero() {
     <div className="auth-hero" style={{ backgroundImage: `url(${hero})` }}>
       <div className="brand" style={{ padding: 0 }}>
         <div className="brand-logo"><Zap size={22} color="#fff" fill="#fff" /></div>
-        <div className="brand-name" style={{ fontSize: 22 }}>OOAD<span className="grad-text">Center</span></div>
+        <div className="brand-name" style={{ fontSize: 22 }}>DFGym<span className="grad-text">Center</span></div>
       </div>
       <div>
         <Badge color="pink">Chuỗi phòng gym đa chi nhánh</Badge>
@@ -44,21 +48,67 @@ const DEMO = [
   ['admin@ooad.vn', 'admin'],
 ];
 
+function mapApiUserToLocalUser(apiUser: ApiUserDto, existing?: User): User {
+  return {
+    id: existing?.id ?? apiUser.id,
+    role: apiUser.role,
+    email: apiUser.email,
+    password: existing?.password ?? '',
+    fullName: apiUser.fullName,
+    phone: apiUser.phone ?? existing?.phone ?? '',
+    gender: (apiUser.gender as User['gender']) || existing?.gender || 'male',
+    dob: apiUser.dateOfBirth ? apiUser.dateOfBirth.slice(0, 10) : (existing?.dob ?? '1998-01-01'),
+    address: apiUser.address ?? existing?.address ?? '',
+    avatarColor: existing?.avatarColor ?? '#7c5cff',
+    locked: apiUser.locked || apiUser.status === 'LOCKED',
+    createdAt: apiUser.createdAt || existing?.createdAt || new Date().toISOString(),
+    branchId: existing?.branchId ?? apiUser.branchId,
+    cardCode: apiUser.cardCode ?? existing?.cardCode,
+    cardStatus: existing?.cardStatus ?? 'ACTIVE',
+    trainer: existing?.trainer ?? (apiUser.role === 'trainer' ? {
+      specialties: (apiUser.specialty || 'Gym, Fitness').split(',').map((s) => s.trim()).filter(Boolean),
+      experienceYears: apiUser.experienceYears ?? 0,
+      certifications: ['HLV OOAD'],
+      bio: apiUser.bio ?? '',
+      branchIds: apiUser.branchId ? [apiUser.branchId] : [],
+    } : undefined),
+  };
+}
+
 export function Login() {
   const { db, user, login, toast } = useApp();
   const nav = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   if (user) return <Navigate to={homeOf(user.role)} replace />;
-  const submit = (e?: React.FormEvent, em = email, pw = password) => {
+  const submit = async (e?: React.FormEvent, em = email, pw = password) => {
     e?.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
     try {
-      const u = L.login(db, em, pw);
-      login(u);
-      toast(`Xin chào, ${u.fullName}!`);
-      nav(homeOf(u.role));
+      const res = await authService.login({ email: em.trim(), password: pw });
+      localStorage.setItem('ooad_api_user', JSON.stringify(res.user));
+      const existing = db.users.find((x) => x.email.toLowerCase() === res.user.email.toLowerCase());
+      const mapped = mapApiUserToLocalUser(res.user, existing);
+      login(mapped);
+      toast(`Xin chào, ${mapped.fullName}!`);
+      nav(homeOf(mapped.role));
     } catch (err) {
-      toast((err as Error).message, 'error');
+      if (isApiNetworkError(err)) {
+        try {
+          const u = L.login(db, em, pw);
+          login(u);
+          toast(`Xin chào, ${u.fullName}! (Chế độ offline)`);
+          nav(homeOf(u.role));
+        } catch (localErr) {
+          toast((localErr as Error).message, 'error');
+        }
+      } else {
+        toast((err as Error).message, 'error');
+      }
+    } finally {
+      setSubmitting(false);
     }
   };
   return (
@@ -110,6 +160,9 @@ export function Login() {
 export function Register() {
   const { db, user, act, login, toast } = useApp();
   const nav = useNavigate();
+  const [branchOptions, setBranchOptions] = useState<{ id: string; name: string }[]>(() =>
+    db.branches.map((b) => ({ id: b.id, name: b.name })),
+  );
   const [f, setF] = useState({
     role: 'member' as 'member' | 'trainer',
     branchId: db.branches[0]?.id || '',
@@ -123,17 +176,59 @@ export function Register() {
     gender: 'male' as 'male' | 'female' | 'other',
     dob: '2000-01-01',
   });
+
+  useEffect(() => {
+    branchesApi
+      .getAll()
+      .then((list) => {
+        if (list.length > 0) {
+          setBranchOptions(list.map((b) => ({ id: b.id, name: b.name })));
+          setF((prev) => ({
+            ...prev,
+            branchId: list.some((b) => b.id === prev.branchId) ? prev.branchId : list[0].id,
+          }));
+        }
+      })
+      .catch(() => {
+        /* giữ fallback danh sách chi nhánh cục bộ khi offline */
+      });
+  }, []);
+
   if (user) return <Navigate to={homeOf(user.role)} replace />;
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setF({ ...f, [k]: k === 'experienceYears' ? +e.target.value : e.target.value });
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (f.password !== f.confirm) return toast('Mật khẩu xác nhận không khớp', 'error');
     if (f.role === 'trainer' && !f.branchId) return toast('Huấn luyện viên bắt buộc phải chọn Chi nhánh!', 'error');
-    const u = act((d) => L.register(d, f), 'Đăng ký thành công!');
-    if (u) {
-      login(u);
-      nav(u.role === 'trainer' ? '/trainer/profile' : '/member/profile');
+    try {
+      const res = await authService.register({
+        email: f.email.trim(),
+        fullName: f.fullName.trim(),
+        password: f.password,
+        phone: f.phone.trim(),
+        role: f.role === 'trainer' ? 'TRAINER' : 'MEMBER',
+        branchId: f.role === 'trainer' ? f.branchId : undefined,
+        gender: f.gender,
+        dateOfBirth: f.dob,
+        specialty: f.role === 'trainer' ? f.specialty : undefined,
+        experienceYears: f.role === 'trainer' ? f.experienceYears : undefined,
+      });
+      localStorage.setItem('ooad_api_user', JSON.stringify(res.user));
+      const mapped = mapApiUserToLocalUser(res.user);
+      login(mapped);
+      toast('Đăng ký thành công!');
+      nav(mapped.role === 'trainer' ? '/trainer/profile' : '/member/profile');
+    } catch (err) {
+      if (isApiNetworkError(err)) {
+        const u = act((d) => L.register(d, f), 'Đăng ký thành công!');
+        if (u) {
+          login(u);
+          nav(u.role === 'trainer' ? '/trainer/profile' : '/member/profile');
+        }
+      } else {
+        toast((err as Error).message, 'error');
+      }
     }
   };
   return (
@@ -158,7 +253,7 @@ export function Register() {
                 <button
                   type="button"
                   className={`chip ${f.role === 'trainer' ? 'on' : ''}`}
-                  onClick={() => setF({ ...f, role: 'trainer', branchId: f.branchId || db.branches[0]?.id || '' })}
+                  onClick={() => setF({ ...f, role: 'trainer', branchId: f.branchId || branchOptions[0]?.id || '' })}
                   id="reg-role-trainer"
                 >
                   Huấn luyện viên (TRAINER)
@@ -170,7 +265,7 @@ export function Register() {
                 <div className="field full">
                   <label>Chi nhánh làm việc (Bắt buộc) *</label>
                   <select className="input" value={f.branchId} onChange={set('branchId')} required id="reg-branch">
-                    {db.branches.map((b) => (
+                    {branchOptions.map((b) => (
                       <option key={b.id} value={b.id}>{b.name}</option>
                     ))}
                   </select>

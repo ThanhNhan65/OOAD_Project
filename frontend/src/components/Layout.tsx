@@ -32,7 +32,6 @@ function useNav(role: Role): { section: string; items: NavItem[] }[] {
           { to: '/member/pt', label: 'Đặt lịch PT', icon: <Dumbbell size={s} /> },
           { to: '/member/bookings', label: 'Lịch của tôi', icon: <ClipboardList size={s} /> },
           { to: '/member/progress', label: 'Tiến độ & chỉ số', icon: <Activity size={s} /> },
-          { to: '/member/rules', label: 'Nội quy phòng gym', icon: <BookOpen size={s} /> },
         ] },
         { section: 'Tài khoản', items: [
           { to: '/member/memberships', label: 'Gói tập', icon: <CreditCard size={s} /> },
@@ -80,6 +79,7 @@ function useNav(role: Role): { section: string; items: NavItem[] }[] {
           { to: '/admin/checkins', label: 'Lịch sử check-in', icon: <History size={s} /> },
           { to: '/admin/settings', label: 'Cấu hình hệ thống', icon: <Settings size={s} /> },
         ] },
+        { section: 'Tài khoản', items: [{ to: '/account', label: 'Tài khoản', icon: <KeyRound size={s} /> }] },
       ];
   }
 }
@@ -160,7 +160,7 @@ export function Layout({ role }: { role: Role }) {
         <div className="brand">
           <div className="brand-logo"><Zap size={22} color="#fff" fill="#fff" /></div>
           <div>
-            <div className="brand-name">OOAD<span className="grad-text">Center</span></div>
+            <div className="brand-name">DFGym<span className="grad-text">Center</span></div>
             <div className="brand-sub">{roleLabel[role][0]}</div>
           </div>
         </div>

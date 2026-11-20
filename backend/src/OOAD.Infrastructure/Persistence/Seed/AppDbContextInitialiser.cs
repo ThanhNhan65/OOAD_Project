@@ -389,5 +389,271 @@ public class AppDbContextInitialiser
             await _context.SaveChangesAsync();
             _logger.LogInformation("Seed dữ liệu mẫu (1-A) vào AppDbContext hoàn tất thành công.");
         }
+
+        // 5. Seed bổ sung (Idempotent) cho phân hệ Lớp học nhóm & Waitlist
+        await SeedGroupClassesAndWaitlistDemoAsync();
+    }
+
+    private async Task SeedGroupClassesAndWaitlistDemoAsync()
+    {
+        var vnOffset = TimeSpan.FromHours(7);
+        var nowUtc = DateTime.UtcNow;
+        var todayVn = nowUtc.Add(vnOffset).Date;
+
+        var branches = await _context.Branches.OrderBy(b => b.Name).ToListAsync();
+        if (branches.Count == 0) return;
+
+        var firstBranch = branches[0];
+        var secondBranch = branches.Count > 1 ? branches[1] : firstBranch;
+        var thirdBranch = branches.Count > 2 ? branches[2] : firstBranch;
+
+        var adminUser = await _context.Users.FirstOrDefaultAsync(u => u.Role == UserRole.Admin);
+
+        // Đảm bảo có cấu hình WAITLIST_CUTOFF_HOURS = 8
+        if (!await _context.SystemSettings.AnyAsync(s => s.SettingKey == "WAITLIST_CUTOFF_HOURS"))
+        {
+            await _context.SystemSettings.AddAsync(new SystemSetting
+            {
+                BranchId = null,
+                UpdatedBy = adminUser?.Id,
+                SettingKey = "WAITLIST_CUTOFF_HOURS",
+                SettingValue = "8",
+                DataType = "INT",
+                Description = "Số giờ trước giờ học đóng danh sách chờ (Waitlist T-8h)"
+            });
+            await _context.SaveChangesAsync();
+        }
+
+        // Đảm bảo member2 (minhanh@ooad.vn) có gói Standard Active để demo so sánh độ ưu tiên Waitlist (VIP > Standard)
+        var member1 = await _context.Members
+            .Include(m => m.User)
+            .FirstOrDefaultAsync(m => m.User.Email == "hoivien@ooad.vn");
+        var member2 = await _context.Members
+            .Include(m => m.User)
+            .FirstOrDefaultAsync(m => m.User.Email == "minhanh@ooad.vn");
+
+        var standardPlan = await _context.MembershipPlans
+            .OrderBy(p => p.PriorityLevel)
+            .FirstOrDefaultAsync(p => p.PlanType == "MEMBERSHIP");
+
+        if (member2 != null && standardPlan != null &&
+            !await _context.Memberships.AnyAsync(ms => ms.MemberId == member2.Id && ms.Status == MembershipStatus.Active))
+        {
+            var ms2 = new Membership
+            {
+                MemberId = member2.Id,
+                PlanId = standardPlan.Id,
+                BranchId = firstBranch.Id,
+                StartDate = DateTime.UtcNow.AddDays(-5),
+                EndDate = DateTime.UtcNow.AddDays(25),
+                RemainingSessions = standardPlan.PtSessions,
+                Status = MembershipStatus.Active
+            };
+            await _context.Memberships.AddAsync(ms2);
+            await _context.SaveChangesAsync();
+        }
+
+        // Seed 5 Lớp học nhóm & Buổi học định kỳ + Dữ liệu mẫu điểm danh / đặt chỗ
+        if (!await _context.Classes.AnyAsync())
+        {
+            var trainer = await _context.Trainers.FirstOrDefaultAsync();
+            if (trainer == null) return;
+
+            var yogaClass = new GymClass
+            {
+                BranchId = firstBranch.Id,
+                TrainerId = trainer.Id,
+                Name = "Yoga Flow Sáng",
+                Room = "Phòng Yoga",
+                Capacity = 15,
+                DayOfWeek = 1, // Thứ 2
+                StartTime = new TimeSpan(7, 30, 0),
+                EndTime = new TimeSpan(8, 30, 0)
+            };
+
+            var hiitClass = new GymClass
+            {
+                BranchId = firstBranch.Id,
+                TrainerId = trainer.Id,
+                Name = "HIIT Đốt Mỡ",
+                Room = "Studio A",
+                Capacity = 2, // Sĩ số nhỏ để dễ test Waitlist
+                DayOfWeek = (int)todayVn.AddDays(1).DayOfWeek,
+                StartTime = new TimeSpan(18, 30, 0),
+                EndTime = new TimeSpan(19, 15, 0)
+            };
+
+            var boxingClass = new GymClass
+            {
+                BranchId = secondBranch.Id,
+                TrainerId = trainer.Id,
+                Name = "Boxing Cardio",
+                Room = "Phòng Boxing",
+                Capacity = 16,
+                DayOfWeek = 3, // Thứ 4
+                StartTime = new TimeSpan(17, 30, 0),
+                EndTime = new TimeSpan(18, 30, 0)
+            };
+
+            var pilatesClass = new GymClass
+            {
+                BranchId = firstBranch.Id,
+                TrainerId = trainer.Id,
+                Name = "Pilates Cốt Lõi",
+                Room = "Phòng Yoga",
+                Capacity = 12,
+                DayOfWeek = 5, // Thứ 6
+                StartTime = new TimeSpan(9, 0, 0),
+                EndTime = new TimeSpan(10, 0, 0)
+            };
+
+            var cyclingClass = new GymClass
+            {
+                BranchId = thirdBranch.Id,
+                TrainerId = trainer.Id,
+                Name = "Cycling Sức Bền",
+                Room = "Phòng Cycling",
+                Capacity = 20,
+                DayOfWeek = 6, // Thứ 7
+                StartTime = new TimeSpan(15, 30, 0),
+                EndTime = new TimeSpan(16, 30, 0)
+            };
+
+            var classes = new List<GymClass> { yogaClass, hiitClass, boxingClass, pilatesClass, cyclingClass };
+            await _context.Classes.AddRangeAsync(classes);
+            await _context.SaveChangesAsync();
+
+            // Sinh buổi học cho 14 ngày tới theo lịch lặp của từng lớp
+            var sessions = new List<ClassSession>();
+            foreach (var gc in classes)
+            {
+                for (int offset = 0; offset <= 14; offset++)
+                {
+                    var dVn = todayVn.AddDays(offset);
+                    if ((int)dVn.DayOfWeek != gc.DayOfWeek) continue;
+
+                    var startUtc = dVn.Add(gc.StartTime).Subtract(vnOffset);
+                    var endUtc = dVn.Add(gc.EndTime).Subtract(vnOffset);
+                    if (offset == 0 && startUtc <= nowUtc) continue;
+
+                    sessions.Add(new ClassSession
+                    {
+                        ClassId = gc.Id,
+                        TrainerId = gc.TrainerId,
+                        SessionDate = dVn,
+                        StartAt = startUtc,
+                        EndAt = endUtc,
+                        Status = "SCHEDULED"
+                    });
+                }
+            }
+
+            // Buổi học hôm nay (đã bắt đầu trước 2h) phục vụ HLV test Điểm danh & đối chiếu Check-in
+            var pastStartVn = nowUtc.Add(vnOffset).AddHours(-2);
+            var pastSession = new ClassSession
+            {
+                ClassId = yogaClass.Id,
+                TrainerId = yogaClass.TrainerId,
+                SessionDate = pastStartVn.Date,
+                StartAt = pastStartVn.Subtract(vnOffset),
+                EndAt = pastStartVn.AddHours(1).Subtract(vnOffset),
+                Status = "SCHEDULED"
+            };
+            sessions.Add(pastSession);
+
+            // Đảm bảo có 1 buổi HIIT Đốt Mỡ ngày mai lúc 18:30 (cách > 12h để test Waitlist)
+            var tomorrowVn = todayVn.AddDays(1);
+            var tomorrowHiitStartUtc = tomorrowVn.Add(hiitClass.StartTime).Subtract(vnOffset);
+            var tomorrowHiitSession = sessions.FirstOrDefault(s => s.ClassId == hiitClass.Id && s.SessionDate == tomorrowVn);
+            if (tomorrowHiitSession == null)
+            {
+                tomorrowHiitSession = new ClassSession
+                {
+                    ClassId = hiitClass.Id,
+                    TrainerId = hiitClass.TrainerId,
+                    SessionDate = tomorrowVn,
+                    StartAt = tomorrowHiitStartUtc,
+                    EndAt = tomorrowVn.Add(hiitClass.EndTime).Subtract(vnOffset),
+                    Status = "SCHEDULED"
+                };
+                sessions.Add(tomorrowHiitSession);
+            }
+
+            await _context.ClassSessions.AddRangeAsync(sessions);
+            await _context.SaveChangesAsync();
+
+            // Tạo booking mẫu cho buổi cần điểm danh (member1 đã check-in, member2 chưa check-in)
+            if (member1 != null)
+            {
+                var ms1 = await _context.Memberships
+                    .FirstOrDefaultAsync(m => m.MemberId == member1.Id && m.Status == MembershipStatus.Active);
+
+                if (ms1 != null)
+                {
+                    await _context.Bookings.AddAsync(new Booking
+                    {
+                        MemberId = member1.Id,
+                        MembershipId = ms1.Id,
+                        Type = BookingType.Class,
+                        ClassSessionId = pastSession.Id,
+                        Status = BookingStatus.Confirmed,
+                        CreatedAt = nowUtc.AddHours(-12)
+                    });
+
+                    var dayFromUtc = pastStartVn.Date.Subtract(vnOffset);
+                    var dayToUtc = pastStartVn.Date.AddDays(1).Subtract(vnOffset);
+                    var hasCheckinToday = await _context.Checkins.AnyAsync(c =>
+                        c.MemberId == member1.Id &&
+                        c.BranchId == firstBranch.Id &&
+                        c.CheckInAt >= dayFromUtc &&
+                        c.CheckInAt < dayToUtc);
+
+                    if (!hasCheckinToday)
+                    {
+                        await _context.Checkins.AddAsync(new Checkin
+                        {
+                            MemberId = member1.Id,
+                            BranchId = firstBranch.Id,
+                            Method = CheckinMethod.QR,
+                            CheckInAt = nowUtc.AddHours(-2).AddMinutes(-10),
+                            Note = "Check-in mẫu phục vụ kiểm thử điểm danh lớp nhóm"
+                        });
+                    }
+                }
+            }
+
+            if (member2 != null)
+            {
+                var ms2 = await _context.Memberships
+                    .FirstOrDefaultAsync(m => m.MemberId == member2.Id && m.Status == MembershipStatus.Active);
+
+                if (ms2 != null)
+                {
+                    await _context.Bookings.AddAsync(new Booking
+                    {
+                        MemberId = member2.Id,
+                        MembershipId = ms2.Id,
+                        Type = BookingType.Class,
+                        ClassSessionId = pastSession.Id,
+                        Status = BookingStatus.Confirmed,
+                        CreatedAt = nowUtc.AddHours(-10)
+                    });
+
+                    // Đặt trước 1 chỗ trong buổi HIIT ngày mai (Capacity = 2) để còn 1 chỗ cuối
+                    await _context.Bookings.AddAsync(new Booking
+                    {
+                        MemberId = member2.Id,
+                        MembershipId = ms2.Id,
+                        Type = BookingType.Class,
+                        ClassSessionId = tomorrowHiitSession.Id,
+                        Status = BookingStatus.Confirmed,
+                        CreatedAt = nowUtc.AddHours(-3)
+                    });
+                }
+            }
+
+            await _context.SaveChangesAsync();
+            _logger.LogInformation("Seed dữ liệu mẫu Lớp học nhóm & Buổi học thành công.");
+        }
     }
 }

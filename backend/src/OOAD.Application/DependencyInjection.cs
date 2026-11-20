@@ -13,6 +13,8 @@ public static class DependencyInjection
         services.AddScoped<IMemberCardService, MemberCardService>();
         services.AddScoped<ITrainerService, TrainerService>();
         services.AddScoped<ICheckinService, CheckinService>();
+        services.AddScoped<IGymClassService, GymClassService>();
+        services.AddScoped<IClassBookingService, ClassBookingService>();
         return services;
     }
 }

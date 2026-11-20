@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { DB, User } from '../types';
 import { createSeed } from './seed';
 import { runScheduler, ensureMemberCards } from './logic';
+import { setAuthToken } from '../api/apiClient';
 
 const KEY = 'ooad_db_v2_hcm';
 const SESSION_KEY = 'ooad_session_v1';
@@ -146,11 +147,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     theme,
     toggleTheme,
     login: (u) => {
+      if (!dbRef.current.users.some((x) => x.id === u.id)) {
+        const draft = structuredClone(dbRef.current);
+        draft.users.push(u);
+        commit(draft);
+      }
       localStorage.setItem(SESSION_KEY, u.id);
       setUserId(u.id);
     },
     logout: () => {
       localStorage.removeItem(SESSION_KEY);
+      localStorage.removeItem('ooad_api_user');
+      setAuthToken(null);
       setUserId(null);
     },
     reset: () => {

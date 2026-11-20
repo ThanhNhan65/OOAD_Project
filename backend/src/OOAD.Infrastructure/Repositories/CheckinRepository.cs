@@ -104,5 +104,28 @@ public class CheckinRepository : GenericRepository<Checkin>, ICheckinRepository
             .ToListAsync(cancellationToken);
     }
 
-    
+    public async Task<Dictionary<Guid, DateTime>> GetCheckedInMemberTimesOnDateAsync(
+        Guid branchId,
+        DateTime fromUtc,
+        DateTime toUtc,
+        IEnumerable<Guid> memberIds,
+        CancellationToken cancellationToken = default)
+    {
+        var idList = memberIds.Distinct().ToList();
+        if (idList.Count == 0)
+            return new Dictionary<Guid, DateTime>();
+
+        var rows = await _context.Checkins
+            .AsNoTracking()
+            .Where(c =>
+                c.BranchId == branchId &&
+                idList.Contains(c.MemberId) &&
+                c.CheckInAt >= fromUtc &&
+                c.CheckInAt < toUtc)
+            .GroupBy(c => c.MemberId)
+            .Select(g => new { MemberId = g.Key, FirstCheckInAt = g.Min(x => x.CheckInAt) })
+            .ToListAsync(cancellationToken);
+
+        return rows.ToDictionary(x => x.MemberId, x => x.FirstCheckInAt);
+    }
 }

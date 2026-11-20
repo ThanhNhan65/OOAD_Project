@@ -1,5 +1,6 @@
 using OOAD.API.Extensions;
 using OOAD.API.Middlewares;
+using OOAD.API.Services;
 using OOAD.Application;
 using OOAD.Infrastructure;
 using Microsoft.AspNetCore.Authentication;
@@ -21,9 +22,10 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
-// 3. Cấu hình Controllers & OpenAPI
+// 3. Cấu hình Controllers & OpenAPI & Background Services
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
+builder.Services.AddHostedService<WaitlistCutoffBackgroundService>();
 
 // 4. Cấu hình CORS cho Frontend React (Vite / Next.js)
 builder.Services.AddCors(options =>

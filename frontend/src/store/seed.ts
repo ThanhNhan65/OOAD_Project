@@ -207,7 +207,7 @@ export function createSeed(): DB {
   addMs('m1', 'mp_standard', addDays(T, -60), 'br1');
   const vipAn = addMs('m1', 'mp_vip', addDays(T, -29), 'br1', { freeSessionsUsed: 5, isRenewal: true, createdAt: iso(addDays(T, -32), '20:10') });
   const ptAn = addPT('m1', 'pt10', addDays(T, -8), 0, 'br1');
-  db.payments.push({ id: id('pay'), memberId: 'm1', kind: 'pt', refId: 'pt_failed_demo', amount: 1750000, method: 'momo', status: 'failed', branchId: 'br1', description: 'Mua gói PT PT Starter 5 buổi', createdAt: iso(addDays(T, -9), '21:40') });
+  db.payments.push({ id: id('pay'), memberId: 'm1', kind: 'pt', refId: 'pt_failed_demo', amount: 1750000, method: 'momo', status: 'failed', branchId: 'br1', description: 'Mua gói PT Starter 5 buổi', createdAt: iso(addDays(T, -9), '21:40') });
   db.ptPackages.push({ id: 'pt_failed_demo', memberId: 'm1', ptPlanId: 'pt5', sessionsTotal: 5, sessionsUsed: 0, startDate: addDays(T, -9), endDate: addDays(T, -9), payStatus: 'pending_payment', createdAt: iso(addDays(T, -9), '21:40') });
 
   // m2 – Standard sắp hết hạn
