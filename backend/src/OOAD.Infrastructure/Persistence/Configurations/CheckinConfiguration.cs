@@ -70,6 +70,6 @@ public class CheckinConfiguration : IEntityTypeConfiguration<Checkin>
         builder.HasOne(c => c.Recorder)
             .WithMany(s => s.RecordedCheckins)
             .HasForeignKey(c => c.RecordedBy)
-            .OnDelete(DeleteBehavior.SetNull);
+            .OnDelete(DeleteBehavior.NoAction);
     }
 }

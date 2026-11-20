@@ -1,4 +1,6 @@
+using Microsoft.EntityFrameworkCore;
 using OOAD.Domain.Entities;
+using OOAD.Domain.Enums;
 using OOAD.Domain.Interfaces;
 using OOAD.Infrastructure.Persistence.Context;
 
@@ -9,4 +11,98 @@ public class CheckinRepository : GenericRepository<Checkin>, ICheckinRepository
     public CheckinRepository(AppDbContext context) : base(context)
     {
     }
+
+    private IQueryable<Checkin> QueryWithDetails() => _context.Checkins
+        .Include(c => c.Member).ThenInclude(m => m.User)
+        .Include(c => c.Member).ThenInclude(m => m.MemberCards)
+        .Include(c => c.Branch)
+        .Include(c => c.Card)
+        .Include(c => c.Recorder).ThenInclude(r => r!.User)
+        .Include(c => c.Booking).ThenInclude(b => b!.ClassSession).ThenInclude(cs => cs!.GymClass);
+    
+    public async Task<Checkin?> GetOpenCheckinByMemberIdAsync(  
+        Guid memberId,
+        CancellationToken cancellationToken = default
+    )
+    {
+        return await QueryWithDetails()
+            .Where(c => c.MemberId == memberId && c.CheckOutAt == null)
+            .OrderByDescending(c => c.CheckInAt)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    
+
+    public async Task<Checkin?> GetByIdWithDetailsAsync(
+        Guid id,
+        CancellationToken cancellationToken = default
+    )
+    {
+        return await QueryWithDetails()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Checkin>> GetActiveCheckinsAsync(
+        Guid? branchId = null,
+        CancellationToken cancellationToken = default 
+    )
+    {
+        var query = QueryWithDetails().AsNoTracking().Where(c => c.CheckOutAt == null);
+        if(branchId.HasValue && branchId.Value != Guid.Empty)
+        {
+            query = query.Where(c => c.BranchId == branchId.Value);
+        }
+
+        return await query.OrderByDescending(c => c.CheckInAt).ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Checkin>> GetHistoryAsync(
+        Guid? branchId = null,
+        Guid? memberId = null,
+        CheckinMethod? method = null,
+        DateTime? fromDateUtc = null,
+        DateTime? toDateUtc = null,
+        string? search = null,
+        int take = 200,
+        CancellationToken cancellationToken = default
+    )
+    {
+        var query = QueryWithDetails().AsNoTracking();
+
+        if (branchId.HasValue && branchId.Value != Guid.Empty)
+            query = query.Where(c => c.BranchId == branchId.Value);
+        if (memberId.HasValue && memberId.Value != Guid.Empty)
+            query = query.Where(c => c.MemberId == memberId.Value || c.Member.UserId == memberId.Value);
+        if (method.HasValue)
+            query = query.Where(c => c.Method == method.Value);
+        if (fromDateUtc.HasValue)
+            query = query.Where(c => c.CheckInAt >= fromDateUtc.Value);
+        if (toDateUtc.HasValue)
+            query = query.Where(c => c.CheckInAt < toDateUtc.Value);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim().ToLower();
+            query = query.Where(c =>
+                c.Member.User.FullName.ToLower().Contains(term) ||
+                c.Member.User.Email.ToLower().Contains(term) ||
+                (c.Member.User.Phone != null && c.Member.User.Phone.Contains(term)) ||
+                (c.Card != null && c.Card.CardCode.ToLower().Contains(term)));
+        }
+
+        return await query  
+            .OrderByDescending(c => c.CheckInAt)
+            .Take(Math.Clamp(take, 1, 500))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Checkin>> GetAllOpenCheckinsWithBranchAsync(CancellationToken cancellationToken = default)
+    {
+        return await _context.Checkins
+            .Include(c => c.Branch)
+            .Where(c => c.CheckOutAt == null)
+            .ToListAsync(cancellationToken);
+    }
+
+    
 }
