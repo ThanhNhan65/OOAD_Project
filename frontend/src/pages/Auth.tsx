@@ -7,6 +7,8 @@ import { homeOf } from '../components/Layout';
 import { Avatar, Badge } from '../components/ui';
 import { roleLabel } from '../components/labels';
 import hero from '../assets/gym-hero.jpg';
+import { authService } from '../api';
+import type { Role } from '../types';
 
 function Hero() {
   return (
@@ -45,18 +47,61 @@ const DEMO = [
 ];
 
 export function Login() {
-  const { db, user, login, toast } = useApp();
+  const { db, user, login, act, toast } = useApp();
   const nav = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   if (user) return <Navigate to={homeOf(user.role)} replace />;
-  const submit = (e?: React.FormEvent, em = email, pw = password) => {
+  const submit = async (e?: React.FormEvent, em = email, pw = password) => {
     e?.preventDefault();
     try {
+      // 1. Cố gắng đăng nhập qua API Backend
+      try {
+        const res = await authService.login({ email: em, password: pw });
+        if (res && res.user) {
+          act((d) => {
+            let u = d.users.find((x) => x.email.toLowerCase() === res.user.email.toLowerCase() || x.id === res.user.id);
+            if (!u) {
+              u = {
+                id: res.user.id,
+                email: res.user.email,
+                password: pw,
+                fullName: res.user.fullName,
+                phone: res.user.phone || '',
+                role: res.user.role as Role,
+                gender: (res.user.gender as 'male' | 'female' | 'other') || 'male',
+                dob: res.user.dateOfBirth?.split('T')[0] || '2000-01-01',
+                address: res.user.address || '',
+                avatarColor: '#ec4899',
+                createdAt: res.user.createdAt,
+                branchId: res.user.branchId,
+                locked: res.user.locked,
+                cardCode: res.user.cardCode,
+              };
+              d.users.push(u);
+            } else {
+              u.locked = res.user.locked;
+              u.fullName = res.user.fullName;
+              u.phone = res.user.phone || u.phone;
+              u.branchId = res.user.branchId || u.branchId;
+              if (res.user.cardCode) u.cardCode = res.user.cardCode;
+            }
+          });
+        }
+      } catch (apiErr) {
+        const msg = (apiErr as Error).message || '';
+        if (msg.includes('LOCKED') || msg.includes('khóa') || msg.includes('không chính xác')) {
+          toast(msg, 'error');
+          return;
+        }
+      }
+
       const u = L.login(db, em, pw);
-      login(u);
-      toast(`Xin chào, ${u.fullName}!`);
-      nav(homeOf(u.role));
+      if (u) {
+        login(u);
+        toast(`Xin chào, ${u.fullName}!`);
+        nav(homeOf(u.role));
+      }
     } catch (err) {
       toast((err as Error).message, 'error');
     }
@@ -126,14 +171,40 @@ export function Register() {
   if (user) return <Navigate to={homeOf(user.role)} replace />;
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setF({ ...f, [k]: k === 'experienceYears' ? +e.target.value : e.target.value });
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (f.password !== f.confirm) return toast('Mật khẩu xác nhận không khớp', 'error');
     if (f.role === 'trainer' && !f.branchId) return toast('Huấn luyện viên bắt buộc phải chọn Chi nhánh!', 'error');
-    const u = act((d) => L.register(d, f), 'Đăng ký thành công!');
-    if (u) {
-      login(u);
-      nav(u.role === 'trainer' ? '/trainer/profile' : '/member/profile');
+
+    try {
+      try {
+        await authService.register({
+          email: f.email,
+          fullName: f.fullName,
+          password: f.password,
+          phone: f.phone,
+          role: f.role === 'trainer' ? 'TRAINER' : 'MEMBER',
+          branchId: f.role === 'trainer' ? f.branchId : undefined,
+          dateOfBirth: f.dob,
+          gender: f.gender,
+          specialty: f.role === 'trainer' ? f.specialty : undefined,
+          experienceYears: f.role === 'trainer' ? f.experienceYears : undefined,
+        });
+      } catch (apiErr) {
+        const msg = (apiErr as Error).message || '';
+        if (msg.includes('đã được sử dụng') || msg.includes('bắt buộc')) {
+          toast(msg, 'error');
+          return;
+        }
+      }
+
+      const u = act((d) => L.register(d, f), 'Đăng ký thành công!');
+      if (u) {
+        login(u);
+        nav(u.role === 'trainer' ? '/trainer/profile' : '/member/profile');
+      }
+    } catch (err) {
+      toast((err as Error).message, 'error');
     }
   };
   return (

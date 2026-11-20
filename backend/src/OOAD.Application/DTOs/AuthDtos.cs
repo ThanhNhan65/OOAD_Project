@@ -92,3 +92,20 @@ public class UpdateUserStatusRequest
     public string? Status { get; set; }
     public bool? Locked { get; set; }
 }
+
+public class UpdateUserAdminRequest
+{
+    public string FullName { get; set; } = string.Empty;
+    public string? Phone { get; set; }
+    public string? Role { get; set; }
+    public Guid? BranchId { get; set; }
+    public string? Position { get; set; }
+    public string? Specialty { get; set; }
+    public int? ExperienceYears { get; set; }
+    public string? Bio { get; set; }
+}
+
+public class ResetUserPasswordRequest
+{
+    public string? NewPassword { get; set; }
+}

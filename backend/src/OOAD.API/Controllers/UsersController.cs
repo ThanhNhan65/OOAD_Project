@@ -103,6 +103,38 @@ public class UsersController : ApiControllerBase
         return Ok(updated);
     }
 
+    /// <summary>
+    /// Cập nhật thông tin tài khoản người dùng (họ tên, SĐT, vai trò, chi nhánh) dành cho Admin.
+    /// PUT /api/users/{id}
+    /// </summary>
+    [HttpPut("{id:guid}")]
+    [Authorize(Roles = "ADMIN,Admin")]
+    [ProducesResponseType(typeof(UserDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<UserDto>> UpdateUserByAdmin(
+        Guid id,
+        [FromBody] UpdateUserAdminRequest request,
+        CancellationToken cancellationToken)
+    {
+        var updated = await _authService.UpdateUserByAdminAsync(id, request, cancellationToken);
+        return Ok(updated);
+    }
+
+    /// <summary>
+    /// Đặt lại mật khẩu người dùng về mặc định hoặc mật khẩu mới (dành cho Admin).
+    /// POST /api/users/{id}/reset-password
+    /// </summary>
+    [HttpPost("{id:guid}/reset-password")]
+    [Authorize(Roles = "ADMIN,Admin")]
+    [ProducesResponseType(typeof(UserDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<UserDto>> ResetUserPassword(
+        Guid id,
+        [FromBody] ResetUserPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        var updated = await _authService.ResetUserPasswordAsync(id, request, cancellationToken);
+        return Ok(updated);
+    }
+
     private Guid? GetCurrentUserId()
     {
         var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");

@@ -5,37 +5,74 @@ import { Avatar, PageHead, Badge } from '../components/ui';
 import { roleLabel } from '../components/labels';
 import { MemberCardWidget } from '../components/member-card';
 import * as L from '../store/logic';
+import { userService, authService } from '../api';
 
 export function AccountPage() {
-  const { db, user, act } = useApp();
+  const { db, user, act, toast } = useApp();
   const [fullName, setFullName] = useState(user?.fullName || '');
   const [phone, setPhone] = useState(user?.phone || '');
   const [pw, setPw] = useState({ old: '', n1: '', n2: '' });
 
   const branch = user?.branchId ? L.branchById(db, user.branchId) : null;
 
-  const saveProfile = () => {
-    act((d) => {
-      const u = d.users.find((x) => x.id === user?.id);
-      if (u) {
-        if (!fullName.trim()) throw new Error('Họ tên không được để trống');
-        u.fullName = fullName.trim();
-        u.phone = phone.trim();
+  const saveProfile = async () => {
+    if (!fullName.trim()) {
+      toast('Họ tên không được để trống', 'error');
+      return;
+    }
+    try {
+      try {
+        await userService.updateMe({
+          fullName: fullName.trim(),
+          phone: phone.trim(),
+        });
+      } catch {
+        // Fallback or offline
       }
-    }, 'Đã lưu thông tin tài khoản');
+
+      act((d) => {
+        const u = d.users.find((x) => x.id === user?.id);
+        if (u) {
+          u.fullName = fullName.trim();
+          u.phone = phone.trim();
+        }
+      }, 'Đã lưu thông tin tài khoản');
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    }
   };
 
-  const changePw = () => {
-    act((d) => {
-      const u = d.users.find((x) => x.id === user?.id);
-      if (u) {
-        if (u.password !== pw.old) throw new Error('Mật khẩu hiện tại không đúng');
-        if (pw.n1.length < 6) throw new Error('Mật khẩu mới tối thiểu 6 ký tự');
-        if (pw.n1 !== pw.n2) throw new Error('Xác nhận mật khẩu không khớp');
-        u.password = pw.n1;
-        setPw({ old: '', n1: '', n2: '' });
+  const changePw = async () => {
+    if (!pw.old) return toast('Vui lòng nhập mật khẩu hiện tại', 'error');
+    if (pw.n1.length < 6) return toast('Mật khẩu mới tối thiểu 6 ký tự', 'error');
+    if (pw.n1 !== pw.n2) return toast('Xác nhận mật khẩu không khớp', 'error');
+
+    try {
+      try {
+        await authService.changePassword({
+          currentPassword: pw.old,
+          newPassword: pw.n1,
+          confirmPassword: pw.n2,
+        });
+      } catch (apiErr) {
+        const msg = (apiErr as Error).message || '';
+        if (msg.includes('không chính xác') || msg.includes('không đúng') || msg.includes('hết hạn')) {
+          toast(msg, 'error');
+          return;
+        }
       }
-    }, 'Đổi mật khẩu thành công');
+
+      act((d) => {
+        const u = d.users.find((x) => x.id === user?.id);
+        if (u) {
+          if (u.password !== pw.old) throw new Error('Mật khẩu hiện tại không đúng');
+          u.password = pw.n1;
+          setPw({ old: '', n1: '', n2: '' });
+        }
+      }, 'Đổi mật khẩu thành công');
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    }
   };
 
   if (!user) return null;
