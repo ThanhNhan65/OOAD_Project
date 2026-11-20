@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, Outlet, useNavigate, Navigate, useLocation } from 'react-router-dom';
 import {
@@ -10,6 +10,13 @@ import { useApp } from '../store/AppContext';
 import { Avatar, Badge } from './ui';
 import { roleLabel } from './labels';
 import { timeAgo } from '../utils';
+import {
+  notificationsApi,
+  mapNotificationType,
+  resolveNotificationLink,
+  NOTIFICATIONS_CHANGED_EVENT,
+  type NotificationApiDto,
+} from '../api/notificationsApi';
 import type { Role, Notification } from '../types';
 
 interface NavItem { to: string; label: string; icon: ReactNode; count?: number; end?: boolean }
@@ -92,26 +99,63 @@ export const ntfStyle: Record<Notification['type'], { c: string; i: ReactNode }>
 };
 
 function NotificationBell() {
-  const { db, user, act } = useApp();
+  const { user } = useApp();
   const nav = useNavigate();
   const [open, setOpen] = useState(false);
+  const [list, setList] = useState<NotificationApiDto[]>([]);
   const ref = useRef<HTMLDivElement>(null);
-  const list = db.notifications.filter((n) => n.userId === user?.id);
-  const unread = list.filter((n) => !n.read).length;
+
+  const loadNotifications = useCallback(async () => {
+    if (!user) return;
+    try {
+      const data = await notificationsApi.getAll();
+      setList(data);
+    } catch {
+      // bỏ qua nếu chưa đăng nhập hoặc token hết hạn
+    }
+  }, [user]);
+
+  useEffect(() => {
+    loadNotifications();
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, loadNotifications);
+    return () => window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, loadNotifications);
+  }, [loadNotifications]);
+
+  useEffect(() => {
+    if (open) loadNotifications();
+  }, [open, loadNotifications]);
+
   useEffect(() => {
     const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
-  const markAll = () => act((d) => d.notifications.forEach((n) => n.userId === user?.id && (n.read = true)));
-  const openN = (n: Notification) => {
-    act((d) => {
-      const x = d.notifications.find((y) => y.id === n.id);
-      if (x) x.read = true;
-    });
-    setOpen(false);
-    if (n.link) nav(n.link);
+
+  const unread = list.filter((n) => !n.isRead).length;
+
+  const markAll = async () => {
+    try {
+      await notificationsApi.markAllAsRead();
+      setList((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    } catch {
+      // ignore
+    }
   };
+
+  const openN = async (n: NotificationApiDto) => {
+    if (!n.isRead) {
+      try {
+        await notificationsApi.markAsRead(n.id);
+        setList((prev) => prev.map((x) => (x.id === n.id ? { ...x, isRead: true } : x)));
+      } catch {
+        // ignore
+      }
+    }
+    setOpen(false);
+    const link = resolveNotificationLink(n, user?.role);
+    if (link) nav(link);
+  };
+
   return (
     <div style={{ position: 'relative' }} ref={ref}>
       <button className="icon-btn" onClick={() => setOpen(!open)} id="notification-bell" aria-label="Thông báo">
@@ -125,16 +169,19 @@ function NotificationBell() {
             <button className="btn ghost sm" onClick={markAll} disabled={!unread}>Đánh dấu đã đọc</button>
           </div>
           {list.length === 0 && <div className="empty">Chưa có thông báo</div>}
-          {list.slice(0, 8).map((n) => (
-            <div key={n.id} className={`ntf-item ${n.read ? '' : 'unread'}`} onClick={() => openN(n)}>
-              <div className="ntf-icon" style={{ background: ntfStyle[n.type].c + '22', color: ntfStyle[n.type].c }}>{ntfStyle[n.type].i}</div>
-              <div style={{ minWidth: 0 }}>
-                <div className="bold" style={{ fontSize: 13.5 }}>{n.title}</div>
-                <div className="small muted">{n.message}</div>
-                <div className="small dim mt8" style={{ marginTop: 4 }}>{timeAgo(n.createdAt)}</div>
+          {list.slice(0, 8).map((n) => {
+            const st = ntfStyle[mapNotificationType(n.type)];
+            return (
+              <div key={n.id} className={`ntf-item ${n.isRead ? '' : 'unread'}`} onClick={() => openN(n)}>
+                <div className="ntf-icon" style={{ background: st.c + '22', color: st.c }}>{st.i}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div className="bold" style={{ fontSize: 13.5 }}>{n.title}</div>
+                  <div className="small muted">{n.content}</div>
+                  <div className="small dim mt8" style={{ marginTop: 4 }}>{timeAgo(n.createdAt)}</div>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           <button className="btn ghost block" style={{ borderRadius: 0, padding: 12 }} onClick={() => { setOpen(false); nav('/notifications'); }}>
             Xem tất cả thông báo
           </button>

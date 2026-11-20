@@ -11,7 +11,9 @@ import { methodLabel, reportLabel, eqLabel } from '../../components/labels';
 import { MemberCardWidget } from '../../components/member-card';
 import { fmtDate, fmtDateTime, fmtMoney, todayStr, calcBMI, bmiLabel, uid as genId, fmtTime } from '../../utils';
 import { bodyMeasurementsApi, type ApiBodyMeasurementDto, type ApiNutritionPlanDto } from '../../api/bodyMeasurementsApi';
-import type { User, BodyMetric } from '../../types';
+import { equipmentsApi } from '../../api/equipmentsApi';
+import { request } from '../../api/apiClient';
+import type { User, BodyMetric, Equipment, EquipmentReport } from '../../types';
 
 /* ================= Hồ sơ ================= */
 export function MemberProfile() {
@@ -1618,47 +1620,181 @@ export function MemberPayments() {
 
 /* ================= Báo thiết bị hỏng ================= */
 export function MemberEquipment() {
-  const { db, user, act } = useApp();
+  const { db, user } = useApp();
   const [tab, setTab] = useState<'mine' | 'new'>('mine');
-  const [branch, setBranch] = useState(db.branches[0].id);
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
+  const [equipments, setEquipments] = useState<Equipment[]>([]);
+  const [reports, setReports] = useState<EquipmentReport[]>([]);
+  const [branch, setBranch] = useState('');
   const [eq, setEq] = useState('');
   const [desc, setDesc] = useState('');
-  const mine = db.equipmentReports.filter((r) => r.reporterId === user!.id);
-  const eqs = db.equipment.filter((e) => e.branchId === branch && e.status !== 'retired');
-  const submit = () => {
-    const r = act((d) => { if (!eq) throw new Error('Chọn thiết bị'); if (!desc.trim()) throw new Error('Mô tả sự cố'); L.reportEquipment(d, user!.id, eq, desc.trim()); return true; }, 'Đã gửi phản ánh, cảm ơn bạn!');
-    if (r) { setDesc(''); setEq(''); setTab('mine'); }
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState('');
+  const [msg, setMsg] = useState('');
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setErr('');
+    try {
+      const [brList, eqList, repList] = await Promise.all([
+        request<{ id: string; name: string }[]>('/branches').catch(() => db.branches),
+        equipmentsApi.getAll(),
+        equipmentsApi.getReports(),
+      ]);
+      setBranches(brList);
+      setEquipments(eqList);
+      setReports(repList);
+      setBranch((prev) => prev || brList[0]?.id || '');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Không thể tải dữ liệu thiết bị');
+    } finally {
+      setLoading(false);
+    }
+  }, [db.branches]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const mine = useMemo(
+    () => reports.filter((r) => !r.reporterId || r.reporterId === user?.id),
+    [reports, user?.id]
+  );
+
+  const eqs = useMemo(
+    () => equipments.filter((e) => (!branch || e.branchId === branch) && e.status !== 'retired'),
+    [equipments, branch]
+  );
+
+  const getEqText = (status: string) =>
+    (eqLabel as Record<string, [string, string]>)[status]?.[0] ?? status;
+
+  const getReportInfo = (status: string): [string, 'green' | 'amber' | 'red' | 'blue' | 'purple' | 'slate'] =>
+    ((reportLabel as Record<string, [string, 'green' | 'amber' | 'red' | 'blue' | 'purple' | 'slate']>)[status] ?? [status, 'slate']);
+
+  const branchName = (id?: string) =>
+    branches.find((b) => b.id === id)?.name ?? L.branchById(db, id ?? '')?.name ?? '';
+
+  const submit = async () => {
+    setErr('');
+    setMsg('');
+    if (!eq) return setErr('Vui lòng chọn thiết bị');
+    if (!desc.trim()) return setErr('Vui lòng mô tả sự cố');
+
+    setSubmitting(true);
+    try {
+      await equipmentsApi.createReport({
+        equipmentId: eq,
+        description: desc.trim(),
+      });
+      setDesc('');
+      setEq('');
+      setMsg('Đã gửi phản ánh thành công, cảm ơn bạn!');
+      setTab('mine');
+      await loadData();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Gửi phản ánh thất bại');
+    } finally {
+      setSubmitting(false);
+    }
   };
+
   return (
     <>
       <PageHead title="Phản ánh thiết bị" desc="Phát hiện thiết bị hỏng hoặc sự cố? Hãy báo cho chúng tôi." />
-      <Tabs value={tab} onChange={setTab} tabs={[{ id: 'mine', label: 'Phản ánh của tôi', count: mine.filter((r) => r.status !== 'resolved').length }, { id: 'new', label: <><Wrench size={15} /> Gửi phản ánh mới</> }]} />
-      {tab === 'new' ? (
+
+      {err && <div className="card mb12" style={{ borderColor: 'var(--red)', color: 'var(--red)', padding: 12 }}>{err}</div>}
+      {msg && <div className="card mb12" style={{ borderColor: 'var(--green)', color: 'var(--green)', padding: 12 }}>{msg}</div>}
+
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'mine', label: 'Phản ánh của tôi', count: mine.filter((r) => r.status !== 'resolved').length },
+          { id: 'new', label: <><Wrench size={15} /> Gửi phản ánh mới</> },
+        ]}
+      />
+
+      {loading ? (
+        <div className="card" style={{ padding: 24 }}>Đang tải dữ liệu thiết bị...</div>
+      ) : tab === 'new' ? (
         <div className="card" style={{ maxWidth: 720 }}>
           <div className="form-grid">
-            <div className="field"><label>Chi nhánh</label><select className="input" value={branch} onChange={(e) => { setBranch(e.target.value); setEq(''); }}>{db.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
-            <div className="field"><label>Thiết bị</label><select className="input" value={eq} onChange={(e) => setEq(e.target.value)} id="eq-select"><option value="">— Chọn thiết bị —</option>{eqs.map((e) => <option key={e.id} value={e.id}>{e.code} · {e.name} ({eqLabel[e.status][0]})</option>)}</select></div>
-            <div className="field full"><label>Mô tả sự cố</label><textarea className="input" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="VD: Băng chạy bị trượt, phát tiếng kêu..." id="eq-desc" /></div>
+            <div className="field">
+              <label>Chi nhánh</label>
+              <select className="input" value={branch} onChange={(e) => { setBranch(e.target.value); setEq(''); }}>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Thiết bị</label>
+              <select className="input" value={eq} onChange={(e) => setEq(e.target.value)} id="eq-select">
+                <option value="">— Chọn thiết bị —</option>
+                {eqs.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.code ? `${e.code} · ` : ''}{e.name} ({getEqText(e.status)})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field full">
+              <label>Mô tả sự cố</label>
+              <textarea
+                className="input"
+                value={desc}
+                onChange={(e) => setDesc(e.target.value)}
+                placeholder="VD: Băng chạy bị trượt, phát tiếng kêu..."
+                id="eq-desc"
+              />
+            </div>
           </div>
-          <div className="row mt16" style={{ justifyContent: 'flex-end' }}><button className="btn primary" onClick={submit} id="eq-submit">Gửi phản ánh</button></div>
+          <div className="row mt16" style={{ justifyContent: 'flex-end' }}>
+            <button className="btn primary" onClick={submit} disabled={submitting} id="eq-submit">
+              {submitting ? 'Đang gửi...' : 'Gửi phản ánh'}
+            </button>
+          </div>
         </div>
-      ) : mine.length === 0 ? <div className="card"><Empty text="Bạn chưa gửi phản ánh nào" /></div> : (
+      ) : mine.length === 0 ? (
+        <div className="card"><Empty text="Bạn chưa gửi phản ánh nào" /></div>
+      ) : (
         <div className="grid g2">
           {mine.map((r) => {
-            const e = db.equipment.find((x) => x.id === r.equipmentId);
+            const e = equipments.find((x) => x.id === r.equipmentId);
+            const [badgeText, badgeColor] = getReportInfo(r.status);
             return (
               <div className="card" key={r.id}>
-                <div className="row between"><div><b>{e?.name}</b><div className="small dim">{e?.code} · {L.branchById(db, r.branchId)?.name}</div></div><Badge color={reportLabel[r.status][1]}>{reportLabel[r.status][0]}</Badge></div>
-                <p className="muted mt8">{r.description}</p>
-                <div className="divider" />
-                <div className="col" style={{ gap: 8 }}>
-                  {r.updates.map((u, i) => (
-                    <div key={i} className="row small" style={{ alignItems: 'flex-start' }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 4, marginTop: 6, background: 'var(--primary-2)', flexShrink: 0 }} />
-                      <div><b>{reportLabel[u.status][0]}</b> · <span className="dim">{fmtDateTime(u.at)} · {L.userById(db, u.by)?.fullName}</span><div className="muted">{u.note}</div></div>
+                <div className="row between">
+                  <div>
+                    <b>{e?.name ?? 'Thiết bị'}</b>
+                    <div className="small dim">
+                      {e?.code ? `${e.code} · ` : ''}{branchName(r.branchId ?? e?.branchId)}
                     </div>
-                  ))}
+                  </div>
+                  <Badge color={badgeColor}>{badgeText}</Badge>
                 </div>
+                <p className="muted mt8">{r.description}</p>
+                {r.updates && r.updates.length > 0 && (
+                  <>
+                    <div className="divider" />
+                    <div className="col" style={{ gap: 8 }}>
+                      {r.updates.map((u, i) => {
+                        const [uText] = getReportInfo(u.status);
+                        return (
+                          <div key={i} className="row small" style={{ alignItems: 'flex-start' }}>
+                            <span style={{ width: 8, height: 8, borderRadius: 4, marginTop: 6, background: 'var(--primary-2)', flexShrink: 0 }} />
+                            <div>
+                              <b>{uText}</b> · <span className="dim">{fmtDateTime(u.at)} {u.by ? `· ${L.userById(db, u.by)?.fullName ?? u.by}` : ''}</span>
+                              <div className="muted">{u.note}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
             );
           })}
@@ -1667,3 +1803,4 @@ export function MemberEquipment() {
     </>
   );
 }
+

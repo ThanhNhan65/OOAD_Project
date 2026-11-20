@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   ShieldAlert,
   CheckCircle2,
@@ -14,9 +14,15 @@ import {
   FileCheck,
   CalendarClock,
   Award,
+  Plus,
+  Edit2,
+  Trash2,
 } from 'lucide-react';
-import { PageHead, Badge, Tabs } from '../../components/ui';
+import { PageHead, Badge, Tabs, Modal } from '../../components/ui';
 import { useApp } from '../../store/AppContext';
+import { gymRulesApi, type GymRuleApiDto } from '../../api/gymRulesApi';
+import { branchesApi, type BranchApiDto } from '../../api/branchesApi';
+import { fmtDateTime } from '../../utils';
 
 interface RuleSection {
   id: string;
@@ -243,13 +249,54 @@ const GYM_RULES_DATA: RuleSection[] = [
   },
 ];
 
+const RULE_CATEGORIES: Record<string, string> = {
+  GENERAL: 'Quy định chung',
+  CHECKIN: 'Thẻ & Check-in',
+  BOOKING: 'Đặt lịch & Hủy lịch',
+  TRAINER: 'Quy tắc PT / Trainer',
+  SAFETY: 'An toàn & Thiết bị',
+  FREEZE: 'Bảo lưu thẻ',
+  ETIQUETTE: 'Văn hóa phòng tập',
+};
+
 export function GymRules() {
-  const { toast } = useApp();
+  const { user, toast } = useApp();
+  const isAdmin = user?.role === 'admin';
   const [activeTab, setActiveTab] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [acknowledged, setAcknowledged] = useState<boolean>(() => {
     return localStorage.getItem('ooad_rules_ack') === '1';
   });
+
+  const [apiRules, setApiRules] = useState<GymRuleApiDto[]>([]);
+  const [branches, setBranches] = useState<BranchApiDto[]>([]);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingRule, setEditingRule] = useState<GymRuleApiDto | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [category, setCategory] = useState('GENERAL');
+  const [branchId, setBranchId] = useState('');
+  const [isActive, setIsActive] = useState(true);
+
+  const loadRules = useCallback(async () => {
+    try {
+      const [rulesData, brData] = await Promise.all([
+        gymRulesApi.getAll({ includeInactive: isAdmin }),
+        isAdmin ? branchesApi.getAll().catch(() => []) : Promise.resolve([]),
+      ]);
+      setApiRules(rulesData);
+      setBranches(brData);
+    } catch {
+      // Giữ bộ nội quy chuẩn hiển thị nếu backend chưa bật
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    loadRules();
+  }, [loadRules]);
 
   const handleAck = () => {
     localStorage.setItem('ooad_rules_ack', '1');
@@ -257,10 +304,80 @@ export function GymRules() {
     toast('Cảm ơn bạn đã xác nhận cam kết tuân thủ Nội quy OOAD!', 'success');
   };
 
+  const openCreate = () => {
+    setEditingRule(null);
+    setTitle('');
+    setContent('');
+    setCategory('GENERAL');
+    setBranchId('');
+    setIsActive(true);
+    setErr('');
+    setModalOpen(true);
+  };
+
+  const openEdit = (r: GymRuleApiDto) => {
+    setEditingRule(r);
+    setTitle(r.title);
+    setContent(r.content);
+    setCategory(r.category || 'GENERAL');
+    setBranchId(r.branchId || '');
+    setIsActive(r.isActive);
+    setErr('');
+    setModalOpen(true);
+  };
+
+  const handleSaveRule = async () => {
+    if (!title.trim() || !content.trim()) {
+      setErr('Vui lòng nhập đầy đủ tiêu đề và nội dung nội quy');
+      return;
+    }
+    setSaving(true);
+    setErr('');
+    try {
+      const payload = {
+        branchId: branchId || null,
+        title: title.trim(),
+        content: content.trim(),
+        category,
+      };
+      if (editingRule) {
+        await gymRulesApi.update(editingRule.id, { ...payload, isActive });
+        toast('Đã cập nhật nội quy', 'success');
+      } else {
+        await gymRulesApi.create(payload);
+        toast('Đã thêm nội quy mới', 'success');
+      }
+      setModalOpen(false);
+      await loadRules();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Lưu nội quy thất bại');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteRule = async (id: string) => {
+    if (!confirm('Bạn có chắc muốn xóa nội quy này?')) return;
+    try {
+      await gymRulesApi.delete(id);
+      toast('Đã xóa nội quy', 'success');
+      await loadRules();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Xóa nội quy thất bại');
+    }
+  };
+
+  const q = search.trim().toLowerCase();
+
+  const filteredApiRules = apiRules.filter((r) => {
+    if (activeTab !== 'all' && r.category.toLowerCase() !== activeTab) return false;
+    if (!q) return true;
+    return r.title.toLowerCase().includes(q) || r.content.toLowerCase().includes(q);
+  });
+
   const filteredSections = GYM_RULES_DATA.filter((sec) => {
     if (activeTab !== 'all' && sec.category !== activeTab) return false;
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
+    if (!q) return true;
     return (
       sec.title.toLowerCase().includes(q) ||
       sec.summary.toLowerCase().includes(q) ||
@@ -274,22 +391,34 @@ export function GymRules() {
         title="Nội Quy Phòng Gym & Quy Chuẩn Vận Hành"
         desc="Bộ quy tắc chuẩn mực dành cho Hội viên và Huấn luyện viên (PT) nhằm đảm bảo an toàn, công bằng và văn minh."
         actions={
-          <div className="row" style={{ gap: 10 }}>
-            {acknowledged ? (
-              <Badge color="green">
-                <CheckCircle2 size={14} /> Đã cam kết tuân thủ
-              </Badge>
-            ) : (
-              <button className="btn primary sm" onClick={handleAck}>
-                <Award size={15} /> Xác nhận đã đọc nội quy
+          <div className="row wrap" style={{ gap: 10 }}>
+            {isAdmin && (
+              <button className="btn primary sm" onClick={openCreate} id="btn-add-rule">
+                <Plus size={15} /> Thêm nội quy
               </button>
             )}
+            {!isAdmin &&
+              (acknowledged ? (
+                <Badge color="green">
+                  <CheckCircle2 size={14} /> Đã cam kết tuân thủ
+                </Badge>
+              ) : (
+                <button className="btn primary sm" onClick={handleAck}>
+                  <Award size={15} /> Xác nhận đã đọc nội quy
+                </button>
+              ))}
             <div className="badge b-purple row" style={{ padding: '7px 12px', fontSize: 12.5 }}>
               <FileCheck size={15} /> Phiên bản chuẩn 2026
             </div>
           </div>
         }
       />
+
+      {err && !modalOpen && (
+        <div className="card mb16" style={{ borderColor: 'var(--red)', color: 'var(--red)', padding: 12 }}>
+          {err}
+        </div>
+      )}
 
       {/* 6 Quy Tắc Vàng Tóm Tắt Nhanh */}
       <div className="card mb24" style={{ padding: 20 }}>
@@ -329,7 +458,7 @@ export function GymRules() {
             value={activeTab}
             onChange={setActiveTab}
             tabs={[
-              { id: 'all', label: 'Tất cả (6 mục)' },
+              { id: 'all', label: 'Tất cả' },
               { id: 'checkin', label: 'Thẻ & Check-in' },
               { id: 'booking', label: 'Đặt lịch & Hủy lịch' },
               { id: 'trainer', label: 'Quy tắc PT / Trainer' },
@@ -350,6 +479,56 @@ export function GymRules() {
           </div>
         </div>
       </div>
+
+      {/* Quy định bổ sung lưu trong Database */}
+      {filteredApiRules.length > 0 && (
+        <div className="card mb24" style={{ borderLeft: '4px solid var(--primary)' }}>
+          <div className="row between wrap mb16" style={{ gap: 10 }}>
+            <div>
+              <h2 style={{ fontSize: 16.5 }}>Quy định cập nhật từ Ban Quản Trị</h2>
+              <div className="small dim">Đồng bộ trực tiếp từ hệ thống ({filteredApiRules.length} quy định)</div>
+            </div>
+          </div>
+          <div className="col" style={{ gap: 10 }}>
+            {filteredApiRules.map((r) => (
+              <div
+                key={r.id}
+                style={{
+                  background: 'var(--surface-2)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '13px 16px',
+                  border: '1px solid var(--border)',
+                  opacity: r.isActive ? 1 : 0.6,
+                }}
+              >
+                <div className="row between wrap" style={{ gap: 8, marginBottom: 4 }}>
+                  <div className="row wrap" style={{ gap: 8 }}>
+                    <CheckCircle2 size={16} color="var(--primary)" />
+                    <span className="bold" style={{ fontSize: 14 }}>{r.title}</span>
+                    <Badge color="purple" plain>{RULE_CATEGORIES[r.category] ?? r.category}</Badge>
+                    <Badge color="gray" plain>{r.branchName || 'Toàn hệ thống'}</Badge>
+                    {!r.isActive && <Badge color="gray">Đang ẩn</Badge>}
+                  </div>
+                  {isAdmin && (
+                    <div className="row" style={{ gap: 6 }}>
+                      <button className="btn sm ghost" onClick={() => openEdit(r)}>
+                        <Edit2 size={14} /> Sửa
+                      </button>
+                      <button className="btn sm danger" onClick={() => handleDeleteRule(r.id)}>
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <p className="muted" style={{ lineHeight: 1.6, fontSize: 13.5, marginLeft: 24 }}>{r.content}</p>
+                <div className="small dim mt8" style={{ marginLeft: 24 }}>
+                  Cập nhật: {fmtDateTime(r.updatedAt || r.createdAt)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Danh Sách Các Mục Quy Định Chi Tiết */}
       <div className="col" style={{ gap: 20 }}>
@@ -434,7 +613,7 @@ export function GymRules() {
           );
         })}
 
-        {filteredSections.length === 0 && (
+        {filteredSections.length === 0 && filteredApiRules.length === 0 && (
           <div className="card" style={{ padding: 48, textAlign: 'center' }}>
             <BookOpen size={40} className="dim" style={{ margin: '0 auto 12px' }} />
             <h3>Không tìm thấy nội quy phù hợp</h3>
@@ -461,7 +640,7 @@ export function GymRules() {
             </div>
           </div>
           <div className="row" style={{ gap: 8 }}>
-            {!acknowledged && (
+            {!isAdmin && !acknowledged && (
               <button className="btn primary sm" onClick={handleAck}>
                 Tôi đã hiểu & đồng ý tuân thủ
               </button>
@@ -472,6 +651,70 @@ export function GymRules() {
           </div>
         </div>
       </div>
+
+      {/* Modal Thêm / Sửa nội quy cho Admin */}
+      {modalOpen && (
+        <Modal
+          title={editingRule ? 'Chỉnh sửa nội quy' : 'Thêm nội quy mới'}
+          onClose={() => setModalOpen(false)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setModalOpen(false)}>Hủy</button>
+              <button className="btn primary" disabled={saving} onClick={handleSaveRule} id="save-rule">
+                {saving ? 'Đang lưu...' : 'Lưu nội quy'}
+              </button>
+            </>
+          }
+        >
+          {err && <div className="small mb12" style={{ color: 'var(--red)' }}>{err}</div>}
+          <div className="form-grid">
+            <div className="field full">
+              <label>Tiêu đề nội quy *</label>
+              <input
+                className="input"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="VD: Quy định sử dụng tủ đồ cá nhân"
+              />
+            </div>
+            <div className="field">
+              <label>Danh mục</label>
+              <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>
+                {Object.entries(RULE_CATEGORIES).map(([k, label]) => (
+                  <option key={k} value={k}>{label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Phạm vi áp dụng</label>
+              <select className="input" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+                <option value="">Toàn hệ thống</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field full">
+              <label>Nội dung chi tiết *</label>
+              <textarea
+                className="input"
+                rows={4}
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                placeholder="Mô tả chi tiết quy định và chế tài nếu vi phạm..."
+              />
+            </div>
+            {editingRule && (
+              <div className="field full">
+                <label className="check">
+                  <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
+                  Hiển thị công khai cho hội viên
+                </label>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

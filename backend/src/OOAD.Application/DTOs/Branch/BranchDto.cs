@@ -21,3 +21,11 @@ public record CreateBranchDto(
     string PhoneNumber,
     string OperatingHours
 );
+public record UpdateBranchDto(
+    string Name,
+    string District,
+    string Address,
+    string PhoneNumber,
+    string OperatingHours,
+    bool IsActive
+);

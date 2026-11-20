@@ -60,12 +60,12 @@ public class CheckinConfiguration : IEntityTypeConfiguration<Checkin>
         builder.HasOne(c => c.Card)
             .WithMany(mc => mc.Checkins)
             .HasForeignKey(c => c.CardId)
-            .OnDelete(DeleteBehavior.SetNull);
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(c => c.Booking)
             .WithOne(b => b.Checkin)
             .HasForeignKey<Checkin>(c => c.BookingId)
-            .OnDelete(DeleteBehavior.SetNull);
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(c => c.Recorder)
             .WithMany(s => s.RecordedCheckins)

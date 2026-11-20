@@ -4,6 +4,7 @@ using OOAD.API.Services;
 using OOAD.Application;
 using OOAD.Infrastructure;
 using Microsoft.AspNetCore.Authentication;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -41,13 +42,16 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// 5. Kích hoạt tự động tạo lại Database (28 bảng Fluent API) & Seed dữ liệu 1-A (Cứu hộ khi thầy xóa DB)
+// 5. Kích hoạt tự động tạo lại Database (28 bảng Fluent API) & Seed dữ liệu mẫu
 await app.InitialiseDatabaseAsync();
 
 // 6. Cấu hình HTTP Request Pipeline
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+    
+    // Bật giao diện test API Scalar trực quan tại đường dẫn /scalar
+    app.MapScalarApiReference();
 }
 
 app.UseHttpsRedirection();
