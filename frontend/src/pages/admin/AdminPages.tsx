@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { branchesApi, type BranchApiDto } from '../../api/branchesApi';
+import { equipmentsApi } from '../../api/equipmentsApi';
 import {
   Users, UserPlus, Lock, Unlock, Building2, Package, CalendarDays, Plus,
   Edit2, Trash2, Calendar, Clock, AlertCircle, Save, Check, X, Shield, MapPin, Sparkles
@@ -336,75 +338,122 @@ function EditUserModal({ user, onClose }: { user: User; onClose: () => void }) {
 /*  2. Quản lý Chi nhánh (AdminBranches)                                      */
 /* ========================================================================== */
 export function AdminBranches() {
-  const { db, act } = useApp();
+  const { db } = useApp();
+  const [branches, setBranches] = useState<BranchApiDto[]>([]);
+  const [eqCounts, setEqCounts] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
+  const [editingBranch, setEditingBranch] = useState<BranchApiDto | null>(null);
 
   const [name, setName] = useState('');
+  const [district, setDistrict] = useState('');
   const [address, setAddress] = useState('');
-  const [phone, setPhone] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [openTime, setOpenTime] = useState('05:30');
   const [closeTime, setCloseTime] = useState('22:00');
-  const [rooms, setRooms] = useState('Phòng Yoga, Studio A, Khu PT');
+  const [isActive, setIsActive] = useState(true);
 
-  const openEdit = (b: Branch) => {
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setErr('');
+    try {
+      const [brList, eqList] = await Promise.all([
+        branchesApi.getAll(),
+        equipmentsApi.getAll().catch(() => []),
+      ]);
+      setBranches(brList);
+      const counts: Record<string, number> = {};
+      for (const e of eqList) {
+        counts[e.branchId] = (counts[e.branchId] || 0) + 1;
+      }
+      setEqCounts(counts);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Không thể tải danh sách chi nhánh');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const parseHours = (hours: string): [string, string] => {
+    const parts = hours.split(/[-–]/).map((s) => s.trim());
+    return [parts[0] || '05:30', parts[1] || '22:00'];
+  };
+
+  const openEdit = (b: BranchApiDto) => {
+    const [o, c] = parseHours(b.operatingHours);
     setEditingBranch(b);
     setName(b.name);
+    setDistrict(b.district);
     setAddress(b.address);
-    setPhone(b.phone);
-    setOpenTime(b.openTime);
-    setCloseTime(b.closeTime);
-    setRooms(b.rooms.join(', '));
+    setPhoneNumber(b.phoneNumber);
+    setOpenTime(o);
+    setCloseTime(c);
+    setIsActive(b.isActive);
+    setErr('');
     setModalOpen(true);
   };
 
   const openCreate = () => {
     setEditingBranch(null);
     setName('');
+    setDistrict('');
     setAddress('');
-    setPhone('');
+    setPhoneNumber('');
     setOpenTime('05:30');
     setCloseTime('22:00');
-    setRooms('Phòng Yoga, Studio A, Khu PT');
+    setIsActive(true);
+    setErr('');
     setModalOpen(true);
   };
 
-  const handleSave = () => {
-    act((d) => {
-      if (!name.trim()) throw new Error('Vui lòng nhập tên chi nhánh');
-      const rList = rooms.split(',').map((r) => r.trim()).filter(Boolean);
+  const handleSave = async () => {
+    if (!name.trim()) return setErr('Vui lòng nhập tên chi nhánh');
+    if (!district.trim()) return setErr('Vui lòng nhập quận / khu vực');
+    if (!address.trim()) return setErr('Vui lòng nhập địa chỉ');
+
+    setSaving(true);
+    setErr('');
+    const operatingHours = `${openTime} - ${closeTime}`;
+    try {
       if (editingBranch) {
-        const b = d.branches.find((x) => x.id === editingBranch.id);
-        if (b) {
-          b.name = name.trim();
-          b.address = address.trim();
-          b.phone = phone.trim();
-          b.openTime = openTime;
-          b.closeTime = closeTime;
-          b.rooms = rList;
-        }
-      } else {
-        const newBranch: Branch = {
-          id: uid('br'),
+        await branchesApi.update(editingBranch.id, {
           name: name.trim(),
+          district: district.trim(),
           address: address.trim(),
-          phone: phone.trim(),
-          openTime,
-          closeTime,
-          rooms: rList,
-          active: true,
-        };
-        d.branches.push(newBranch);
+          phoneNumber: phoneNumber.trim(),
+          operatingHours,
+          isActive,
+        });
+      } else {
+        await branchesApi.create({
+          name: name.trim(),
+          district: district.trim(),
+          address: address.trim(),
+          phoneNumber: phoneNumber.trim(),
+          operatingHours,
+        });
       }
-    }, editingBranch ? 'Đã cập nhật chi nhánh' : 'Đã thêm chi nhánh mới');
-    setModalOpen(false);
+      setModalOpen(false);
+      await loadData();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Lưu chi nhánh thất bại');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
     <>
       <PageHead
         title="Quản lý Chi nhánh"
-        desc="Cấu hình danh sách cơ sở, thời gian hoạt động và các phòng chức năng."
+        desc="Cấu hình danh sách cơ sở, địa chỉ và thời gian hoạt động."
         actions={
           <button className="btn primary" onClick={openCreate} id="btn-add-branch">
             <Plus size={16} /> Thêm chi nhánh
@@ -412,54 +461,65 @@ export function AdminBranches() {
         }
       />
 
-      <div className="grid g3">
-        {db.branches.map((b) => {
-          const staffCount = db.users.filter((u) => u.branchId === b.id).length;
-          const eqCount = db.equipment.filter((e) => e.branchId === b.id).length;
-          const classCount = db.classes.filter((c) => c.branchId === b.id && c.active).length;
-          return (
-            <div className="card hover" key={b.id}>
-              <div className="card-head">
-                <div className="row">
-                  <Building2 size={20} color="#7c5cff" />
-                  <h2>{b.name}</h2>
-                </div>
-                <button className="btn sm ghost" onClick={() => openEdit(b)} id={`edit-branch-${b.id}`}>
-                  <Edit2 size={14} /> Sửa
-                </button>
-              </div>
+      {err && !modalOpen && (
+        <div className="card mb16" style={{ borderColor: 'var(--red)', color: 'var(--red)', padding: 12 }}>
+          {err}
+        </div>
+      )}
 
-              <div className="col small mb16" style={{ gap: 6 }}>
-                <div className="row muted"><MapPin size={14} /> {b.address}</div>
-                <div className="row muted"><Clock size={14} /> Giờ mở cửa: {b.openTime} – {b.closeTime}</div>
-              </div>
+      {loading ? (
+        <div className="card" style={{ padding: 24 }}>Đang tải danh sách chi nhánh...</div>
+      ) : branches.length === 0 ? (
+        <div className="card"><Empty text="Chưa có chi nhánh nào" /></div>
+      ) : (
+        <div className="grid g3">
+          {branches.map((b) => {
+            const staffCount = db.users.filter((u) => u.branchId === b.id).length;
+            const eqCount = eqCounts[b.id] ?? 0;
+            const classCount = db.classes.filter((c) => c.branchId === b.id && c.active).length;
+            return (
+              <div className="card hover" key={b.id} style={{ opacity: b.isActive ? 1 : 0.65 }}>
+                <div className="card-head">
+                  <div className="row">
+                    <Building2 size={20} color="#7c5cff" />
+                    <div>
+                      <h2>{b.name}</h2>
+                      <div className="small dim">{b.district}</div>
+                    </div>
+                  </div>
+                  <div className="row" style={{ gap: 6 }}>
+                    <Badge color={b.isActive ? 'green' : 'gray'}>{b.isActive ? 'Hoạt động' : 'Tạm đóng'}</Badge>
+                    <button className="btn sm ghost" onClick={() => openEdit(b)} id={`edit-branch-${b.id}`}>
+                      <Edit2 size={14} /> Sửa
+                    </button>
+                  </div>
+                </div>
 
-              <div className="divider" />
-              <div className="small bold mb16" style={{ marginBottom: 6 }}>Phòng chức năng ({b.rooms.length}):</div>
-              <div className="chips mb16">
-                {b.rooms.map((r) => (
-                  <Badge key={r} color="gray" plain>{r}</Badge>
-                ))}
-              </div>
+                <div className="col small mb16" style={{ gap: 6 }}>
+                  <div className="row muted"><MapPin size={14} /> {b.address}</div>
+                  <div className="row muted"><Clock size={14} /> Giờ mở cửa: {b.operatingHours}</div>
+                  {b.phoneNumber && <div className="row muted">📞 {b.phoneNumber}</div>}
+                </div>
 
-              <div className="grid g3 pt16" style={{ borderTop: '1px solid var(--border)', textAlign: 'center', paddingTop: 10 }}>
-                <div>
-                  <div className="bold">{staffCount}</div>
-                  <div className="small dim">Nhân viên</div>
-                </div>
-                <div>
-                  <div className="bold">{classCount}</div>
-                  <div className="small dim">Lớp học</div>
-                </div>
-                <div>
-                  <div className="bold">{eqCount}</div>
-                  <div className="small dim">Thiết bị</div>
+                <div className="grid g3 pt16" style={{ borderTop: '1px solid var(--border)', textAlign: 'center', paddingTop: 10 }}>
+                  <div>
+                    <div className="bold">{staffCount}</div>
+                    <div className="small dim">Nhân viên</div>
+                  </div>
+                  <div>
+                    <div className="bold">{classCount}</div>
+                    <div className="small dim">Lớp học</div>
+                  </div>
+                  <div>
+                    <div className="bold">{eqCount}</div>
+                    <div className="small dim">Thiết bị</div>
+                  </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       {modalOpen && (
         <Modal
@@ -468,22 +528,29 @@ export function AdminBranches() {
           footer={
             <>
               <button className="btn" onClick={() => setModalOpen(false)}>Hủy</button>
-              <button className="btn primary" onClick={handleSave} id="save-branch">Lưu</button>
+              <button className="btn primary" disabled={saving} onClick={handleSave} id="save-branch">
+                {saving ? 'Đang lưu...' : 'Lưu'}
+              </button>
             </>
           }
         >
+          {err && <div className="small mb12" style={{ color: 'var(--red)' }}>{err}</div>}
           <div className="form-grid">
-            <div className="field full">
+            <div className="field">
               <label>Tên chi nhánh *</label>
-              <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="VD: OOAD Cầu Giấy" id="branch-name" />
+              <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="VD: OOAD Quận 1" id="branch-name" />
+            </div>
+            <div className="field">
+              <label>Quận / Khu vực *</label>
+              <input className="input" value={district} onChange={(e) => setDistrict(e.target.value)} placeholder="VD: Quận 1" id="branch-district" />
             </div>
             <div className="field full">
               <label>Địa chỉ *</label>
-              <input className="input" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="VD: 123 Xuân Thủy, Cầu Giấy, Hà Nội" id="branch-address" />
+              <input className="input" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="VD: 123 Nguyễn Huệ, Quận 1, TP.HCM" id="branch-address" />
             </div>
             <div className="field">
               <label>Số điện thoại</label>
-              <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="024 3888 1111" />
+              <input className="input" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="028 3888 1111" />
             </div>
             <div className="field">
               <label>Giờ hoạt động (Mở - Đóng)</label>
@@ -493,10 +560,14 @@ export function AdminBranches() {
                 <input type="time" className="input" value={closeTime} onChange={(e) => setCloseTime(e.target.value)} />
               </div>
             </div>
-            <div className="field full">
-              <label>Các phòng chức năng (ngăn cách bằng dấu phẩy)</label>
-              <textarea className="input" value={rooms} onChange={(e) => setRooms(e.target.value)} placeholder="Phòng Yoga, Phòng Boxing, Studio A, Khu PT" />
-            </div>
+            {editingBranch && (
+              <div className="field full">
+                <label className="check">
+                  <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
+                  Chi nhánh đang hoạt động
+                </label>
+              </div>
+            )}
           </div>
         </Modal>
       )}

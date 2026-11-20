@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { equipmentsApi } from '../../api/equipmentsApi';
+import { request } from '../../api/apiClient';
 import { Link } from 'react-router-dom';
 import { ScanLine, LogIn, LogOut, CheckCircle2, XCircle, Users, Snowflake, Wrench, History, Search, Keyboard, Check, X, Plus, Building2, Download, Zap, ArrowLeft } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
@@ -6,7 +8,7 @@ import * as L from '../../store/logic';
 import { Avatar, Badge, Empty, Modal, PageHead, StatCard, Tabs, ReasonModal } from '../../components/ui';
 import { reqLabel, reportLabel, eqLabel, mStatusLabel } from '../../components/labels';
 import { fmtDate, fmtDateTime, fmtTime, todayStr, uid as genId } from '../../utils';
-import type { CheckIn, ReportStatus, EquipmentStatus } from '../../types';
+import type { CheckIn, ReportStatus, EquipmentStatus, Equipment, EquipmentReport } from '../../types';
 
 /* ================= Dashboard lễ tân ================= */
 export function StaffHome() {
@@ -270,117 +272,365 @@ export function StaffFreeze() {
 }
 
 /* ================= Thiết bị (lễ tân & admin) ================= */
+/* ================= Thiết bị (lễ tân & admin) ================= */
+type BadgeColor = Parameters<typeof Badge>[0]['color'];
+
+const getEqInfo = (status: string): [string, BadgeColor] =>
+  (eqLabel as Record<string, [string, BadgeColor]>)[status] ?? [status, 'gray'];
+
+const getReportInfo = (status: string): [string, BadgeColor] =>
+  (reportLabel as Record<string, [string, BadgeColor]>)[status] ?? [status, 'gray'];
+
 export function EquipmentManage() {
-  const { db, user, act } = useApp();
+  const { db, user } = useApp();
   const isAdmin = user!.role === 'admin';
   const [tab, setTab] = useState<'reports' | 'list' | 'summary'>(isAdmin ? 'summary' : 'reports');
-  const [br, setBr] = useState(isAdmin ? 'all' : user!.branchId!);
-  const [upd, setUpd] = useState<string | null>(null);
+  const [br, setBr] = useState(isAdmin ? 'all' : user!.branchId ?? 'all');
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
+  const [allEqs, setAllEqs] = useState<Equipment[]>([]);
+  const [allReports, setAllReports] = useState<EquipmentReport[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [upd, setUpd] = useState<EquipmentReport | null>(null);
   const [add, setAdd] = useState(false);
   const [rec, setRec] = useState(false);
-  const inBr = (b: string) => br === 'all' || b === br;
-  const reports = db.equipmentReports.filter((r) => inBr(r.branchId));
-  const eqs = db.equipment.filter((e) => inBr(e.branchId));
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setErr('');
+    try {
+      const [brList, eqList, repList] = await Promise.all([
+        request<{ id: string; name: string }[]>('/branches').catch(() => db.branches),
+        equipmentsApi.getAll(),
+        equipmentsApi.getReports(),
+      ]);
+      setBranches(brList);
+      setAllEqs(eqList);
+      setAllReports(repList);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Không thể tải dữ liệu thiết bị');
+    } finally {
+      setLoading(false);
+    }
+  }, [db.branches]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const inBr = (b?: string) => br === 'all' || !b || b === br;
+  const reports = allReports.filter((r) => inBr(r.branchId ?? allEqs.find((e) => e.id === r.equipmentId)?.branchId));
+  const eqs = allEqs.filter((e) => inBr(e.branchId));
+
+  const branchName = (id?: string) =>
+    branches.find((b) => b.id === id)?.name ?? L.branchById(db, id ?? '')?.name ?? '—';
+
+  const handleRetire = async (id: string) => {
+    setErr('');
+    try {
+      await equipmentsApi.updateStatus(id, 'retired');
+      await loadData();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Cập nhật trạng thái thất bại');
+    }
+  };
+
   return (
     <>
       <PageHead
         title="Thiết bị & sự cố"
         desc={isAdmin ? 'Báo cáo tình trạng thiết bị toàn hệ thống.' : 'Tiếp nhận phản ánh, ghi nhận thiết bị hỏng và cập nhật sau sửa chữa.'}
         actions={<>
-          {isAdmin && <select className="input" style={{ width: 200 }} value={br} onChange={(e) => setBr(e.target.value)}><option value="all">Tất cả chi nhánh</option>{db.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>}
+          {isAdmin && (
+            <select className="input" style={{ width: 200 }} value={br} onChange={(e) => setBr(e.target.value)}>
+              <option value="all">Tất cả chi nhánh</option>
+              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          )}
           {!isAdmin && <button className="btn" onClick={() => setRec(true)} id="record-broken"><Wrench size={16} /> Ghi nhận thiết bị hỏng</button>}
           {isAdmin && <button className="btn primary" onClick={() => setAdd(true)} id="add-equipment"><Plus size={16} /> Thêm thiết bị</button>}
         </>}
       />
-      <Tabs value={tab} onChange={setTab} tabs={[...(isAdmin ? [{ id: 'summary' as const, label: 'Tổng quan' }] : []), { id: 'reports', label: 'Phản ánh / sự cố', count: reports.filter((r) => r.status === 'pending').length }, { id: 'list', label: 'Danh sách thiết bị' }]} />
-      {tab === 'summary' && (
+
+      {err && <div className="card mb16" style={{ borderColor: 'var(--red)', color: 'var(--red)', padding: 12 }}>{err}</div>}
+
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          ...(isAdmin ? [{ id: 'summary' as const, label: 'Tổng quan' }] : []),
+          { id: 'reports', label: 'Phản ánh / sự cố', count: reports.filter((r) => r.status === 'pending').length },
+          { id: 'list', label: 'Danh sách thiết bị' },
+        ]}
+      />
+
+      {loading ? (
+        <div className="card" style={{ padding: 24 }}>Đang tải dữ liệu thiết bị...</div>
+      ) : (
         <>
-          <div className="grid g4 mb16">
-            {(['active', 'broken', 'repairing', 'retired'] as EquipmentStatus[]).map((s) => <StatCard key={s} icon={<Wrench size={22} />} label={eqLabel[s][0]} value={eqs.filter((e) => e.status === s).length} color={{ active: '#2ed47a', broken: '#ff4d6d', repairing: '#ffb020', retired: '#6d7290' }[s]} />)}
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Chi nhánh</th><th>Tổng</th><th>Hoạt động</th><th>Hỏng</th><th>Đang sửa</th><th>Thanh lý</th><th>Sự cố mở</th><th>Tỷ lệ sẵn sàng</th></tr></thead>
-              <tbody>{db.branches.map((b) => { const l = db.equipment.filter((e) => e.branchId === b.id); const act2 = l.filter((e) => e.status === 'active').length; const usable = l.filter((e) => e.status !== 'retired').length; return (
-                <tr key={b.id}><td><b>{b.name}</b></td><td>{l.length}</td><td>{act2}</td><td style={{ color: '#ff8aa0' }}>{l.filter((e) => e.status === 'broken').length}</td><td style={{ color: '#ffc857' }}>{l.filter((e) => e.status === 'repairing').length}</td><td>{l.filter((e) => e.status === 'retired').length}</td><td>{db.equipmentReports.filter((r) => r.branchId === b.id && ['pending', 'in_progress'].includes(r.status)).length}</td><td><b>{usable ? Math.round((act2 / usable) * 100) : 0}%</b></td></tr>); })}</tbody>
-            </table>
-          </div>
+          {tab === 'summary' && (
+            <>
+              <div className="grid g4 mb16">
+                {(['active', 'broken', 'repairing', 'retired'] as EquipmentStatus[]).map((s) => (
+                  <StatCard
+                    key={s}
+                    icon={<Wrench size={22} />}
+                    label={getEqInfo(s)[0]}
+                    value={eqs.filter((e) => e.status === s).length}
+                    color={{ active: '#2ed47a', broken: '#ff4d6d', repairing: '#ffb020', retired: '#6d7290' }[s]}
+                  />
+                ))}
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Chi nhánh</th><th>Tổng</th><th>Hoạt động</th><th>Hỏng</th><th>Đang sửa</th><th>Thanh lý</th><th>Sự cố mở</th><th>Tỷ lệ sẵn sàng</th></tr></thead>
+                  <tbody>
+                    {branches.map((b) => {
+                      const l = allEqs.filter((e) => e.branchId === b.id);
+                      const act2 = l.filter((e) => e.status === 'active').length;
+                      const usable = l.filter((e) => e.status !== 'retired').length;
+                      const openReps = allReports.filter(
+                        (r) => (r.branchId ?? allEqs.find((e) => e.id === r.equipmentId)?.branchId) === b.id && ['pending', 'in_progress'].includes(r.status),
+                      ).length;
+                      return (
+                        <tr key={b.id}>
+                          <td><b>{b.name}</b></td>
+                          <td>{l.length}</td>
+                          <td>{act2}</td>
+                          <td style={{ color: '#ff8aa0' }}>{l.filter((e) => e.status === 'broken').length}</td>
+                          <td style={{ color: '#ffc857' }}>{l.filter((e) => e.status === 'repairing').length}</td>
+                          <td>{l.filter((e) => e.status === 'retired').length}</td>
+                          <td>{openReps}</td>
+                          <td><b>{usable ? Math.round((act2 / usable) * 100) : 0}%</b></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {tab === 'reports' && (reports.length === 0 ? <div className="card"><Empty text="Không có phản ánh" /></div> : (
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Thiết bị</th><th>Chi nhánh</th><th>Người báo</th><th>Mô tả</th><th>Thời gian</th><th>Trạng thái</th><th></th></tr></thead>
+                <tbody>
+                  {reports.map((r) => {
+                    const e = allEqs.find((x) => x.id === r.equipmentId);
+                    const [repText, repColor] = getReportInfo(r.status);
+                    const lastNote = r.updates?.at(-1)?.note;
+                    return (
+                      <tr key={r.id}>
+                        <td><b>{e?.name ?? 'Thiết bị'}</b><div className="small dim">{e?.code}</div></td>
+                        <td className="small">{branchName(r.branchId ?? e?.branchId)}</td>
+                        <td className="small">{L.userById(db, r.reporterId)?.fullName ?? r.reporterId ?? '—'}</td>
+                        <td className="small muted" style={{ maxWidth: 260 }}>
+                          {r.description}
+                          {lastNote && lastNote !== r.description && <div className="dim">{lastNote}</div>}
+                        </td>
+                        <td className="small">{fmtDateTime(r.createdAt)}</td>
+                        <td><Badge color={repColor}>{repText}</Badge></td>
+                        <td>
+                          {!isAdmin && r.status !== 'resolved' && r.status !== 'rejected' && (
+                            <button className="btn sm" onClick={() => setUpd(r)} id={`update-${r.id}`}>Cập nhật</button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ))}
+
+          {tab === 'list' && (
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Mã</th><th>Thiết bị</th><th>Loại</th><th>Chi nhánh</th><th>Ngày nhập</th><th>Tình trạng</th>{isAdmin && <th></th>}</tr></thead>
+                <tbody>
+                  {eqs.map((e) => {
+                    const [eqText, eqColor] = getEqInfo(e.status);
+                    return (
+                      <tr key={e.id}>
+                        <td className="small" style={{ fontFamily: 'monospace' }}>{e.code}</td>
+                        <td><b>{e.name}</b></td>
+                        <td className="small">{e.category}</td>
+                        <td className="small">{branchName(e.branchId)}</td>
+                        <td className="small">{fmtDate(e.addedAt)}</td>
+                        <td><Badge color={eqColor}>{eqText}</Badge></td>
+                        {isAdmin && (
+                          <td>
+                            {e.status !== 'retired' && (
+                              <button className="btn ghost sm" onClick={() => handleRetire(e.id)}>Thanh lý</button>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
-      {tab === 'reports' && (reports.length === 0 ? <div className="card"><Empty text="Không có phản ánh" /></div> : (
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Thiết bị</th><th>Chi nhánh</th><th>Người báo</th><th>Mô tả</th><th>Thời gian</th><th>Trạng thái</th><th></th></tr></thead>
-            <tbody>{reports.map((r) => { const e = db.equipment.find((x) => x.id === r.equipmentId); return (
-              <tr key={r.id}><td><b>{e?.name}</b><div className="small dim">{e?.code}</div></td><td className="small">{L.branchById(db, r.branchId)?.name}</td><td className="small">{L.userById(db, r.reporterId)?.fullName}</td><td className="small muted" style={{ maxWidth: 260 }}>{r.description}<div className="dim">{r.updates.at(-1)?.note !== r.description && r.updates.at(-1)?.note}</div></td><td className="small">{fmtDateTime(r.createdAt)}</td><td><Badge color={reportLabel[r.status][1]}>{reportLabel[r.status][0]}</Badge></td><td>{!isAdmin && r.status !== 'resolved' && r.status !== 'rejected' && <button className="btn sm" onClick={() => setUpd(r.id)} id={`update-${r.id}`}>Cập nhật</button>}</td></tr>); })}</tbody>
-          </table>
-        </div>
-      ))}
-      {tab === 'list' && (
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Mã</th><th>Thiết bị</th><th>Loại</th><th>Chi nhánh</th><th>Ngày nhập</th><th>Tình trạng</th>{isAdmin && <th></th>}</tr></thead>
-            <tbody>{eqs.map((e) => (
-              <tr key={e.id}><td className="small" style={{ fontFamily: 'monospace' }}>{e.code}</td><td><b>{e.name}</b></td><td className="small">{e.category}</td><td className="small">{L.branchById(db, e.branchId)?.name}</td><td className="small">{fmtDate(e.addedAt)}</td><td><Badge color={eqLabel[e.status][1]}>{eqLabel[e.status][0]}</Badge></td>
-                {isAdmin && <td>{e.status !== 'retired' && <button className="btn ghost sm" onClick={() => act((d) => { d.equipment.find((x) => x.id === e.id)!.status = 'retired'; }, 'Đã chuyển sang thanh lý')}>Thanh lý</button>}</td>}</tr>
-            ))}</tbody>
-          </table>
-        </div>
-      )}
-      {upd && <UpdateReportModal id={upd} onClose={() => setUpd(null)} />}
-      {add && <AddEquipmentModal onClose={() => setAdd(false)} />}
-      {rec && <RecordBrokenModal onClose={() => setRec(false)} />}
+
+      {upd && <UpdateReportModal report={upd} onClose={() => setUpd(null)} onSaved={loadData} />}
+      {add && <AddEquipmentModal branches={branches} existingCount={(bid) => allEqs.filter((e) => e.branchId === bid).length} onClose={() => setAdd(false)} onSaved={loadData} />}
+      {rec && <RecordBrokenModal equipments={allEqs.filter((e) => (!user?.branchId || e.branchId === user.branchId) && e.status === 'active')} onClose={() => setRec(false)} onSaved={loadData} />}
     </>
   );
 }
 
-function UpdateReportModal({ id, onClose }: { id: string; onClose: () => void }) {
-  const { db, user, act } = useApp();
-  const r = db.equipmentReports.find((x) => x.id === id)!;
-  const [status, setStatus] = useState<ReportStatus>(r.status === 'pending' ? 'in_progress' : 'resolved');
+function UpdateReportModal({ report, onClose, onSaved }: { report: EquipmentReport; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [status, setStatus] = useState<ReportStatus>(report.status === 'pending' ? 'in_progress' : 'resolved');
   const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const save = async () => {
+    setSaving(true);
+    setErr('');
+    try {
+      await equipmentsApi.updateReportStatus(report.id, status, note.trim());
+      await onSaved();
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Cập nhật thất bại');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <Modal title="Cập nhật xử lý sự cố" onClose={onClose} footer={<><button className="btn" onClick={onClose}>Hủy</button><button className="btn primary" onClick={() => { act((d) => L.updateReport(d, id, user!.id, status, note), 'Đã cập nhật'); onClose(); }} id="report-save">Lưu</button></>}>
-      <div className="field"><label>Trạng thái</label><div className="chips">{(['in_progress', 'resolved', 'rejected'] as ReportStatus[]).map((s) => <button key={s} className={`chip ${status === s ? 'on' : ''}`} onClick={() => setStatus(s)}>{reportLabel[s][0]}</button>)}</div></div>
-      <div className="field mt16"><label>Ghi chú quá trình xử lý</label><textarea className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="VD: Đã thay dây curoa..." /></div>
+    <Modal
+      title="Cập nhật xử lý sự cố"
+      onClose={onClose}
+      footer={<>
+        <button className="btn" onClick={onClose}>Hủy</button>
+        <button className="btn primary" disabled={saving} onClick={save} id="report-save">{saving ? 'Đang lưu...' : 'Lưu'}</button>
+      </>}
+    >
+      {err && <div className="small mb12" style={{ color: 'var(--red)' }}>{err}</div>}
+      <div className="field">
+        <label>Trạng thái</label>
+        <div className="chips">
+          {(['in_progress', 'resolved', 'rejected'] as ReportStatus[]).map((s) => (
+            <button key={s} className={`chip ${status === s ? 'on' : ''}`} onClick={() => setStatus(s)}>{getReportInfo(s)[0]}</button>
+          ))}
+        </div>
+      </div>
+      <div className="field mt16">
+        <label>Ghi chú quá trình xử lý</label>
+        <textarea className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="VD: Đã thay dây curoa..." />
+      </div>
     </Modal>
   );
 }
 
-function RecordBrokenModal({ onClose }: { onClose: () => void }) {
-  const { db, user, act } = useApp();
-  const eqs = db.equipment.filter((e) => e.branchId === user!.branchId && e.status === 'active');
+function RecordBrokenModal({ equipments, onClose, onSaved }: { equipments: Equipment[]; onClose: () => void; onSaved: () => Promise<void> }) {
   const [eq, setEq] = useState('');
   const [desc, setDesc] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const save = async () => {
+    setSaving(true);
+    setErr('');
+    try {
+      await equipmentsApi.createReport({ equipmentId: eq, description: desc.trim() });
+      await onSaved();
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Ghi nhận thất bại');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <Modal title="Ghi nhận thiết bị hỏng" onClose={onClose} footer={<><button className="btn" onClick={onClose}>Hủy</button><button className="btn primary" disabled={!eq || !desc} onClick={() => { act((d) => L.reportEquipment(d, user!.id, eq, desc), 'Đã ghi nhận'); onClose(); }}>Ghi nhận</button></>}>
-      <div className="field"><label>Thiết bị</label><select className="input" value={eq} onChange={(e) => setEq(e.target.value)}><option value="">— Chọn —</option>{eqs.map((e) => <option key={e.id} value={e.id}>{e.code} · {e.name}</option>)}</select></div>
-      <div className="field mt16"><label>Tình trạng</label><textarea className="input" value={desc} onChange={(e) => setDesc(e.target.value)} /></div>
+    <Modal
+      title="Ghi nhận thiết bị hỏng"
+      onClose={onClose}
+      footer={<>
+        <button className="btn" onClick={onClose}>Hủy</button>
+        <button className="btn primary" disabled={!eq || !desc.trim() || saving} onClick={save}>{saving ? 'Đang lưu...' : 'Ghi nhận'}</button>
+      </>}
+    >
+      {err && <div className="small mb12" style={{ color: 'var(--red)' }}>{err}</div>}
+      <div className="field">
+        <label>Thiết bị</label>
+        <select className="input" value={eq} onChange={(e) => setEq(e.target.value)}>
+          <option value="">— Chọn —</option>
+          {equipments.map((e) => <option key={e.id} value={e.id}>{e.code ? `${e.code} · ` : ''}{e.name}</option>)}
+        </select>
+      </div>
+      <div className="field mt16">
+        <label>Tình trạng</label>
+        <textarea className="input" value={desc} onChange={(e) => setDesc(e.target.value)} />
+      </div>
     </Modal>
   );
 }
 
-function AddEquipmentModal({ onClose }: { onClose: () => void }) {
-  const { db, act } = useApp();
-  const [f, setF] = useState({ name: '', category: 'Cardio', branchId: db.branches[0].id, qty: 1 });
-  const save = () => {
-    const r = act((d) => {
-      if (!f.name.trim()) throw new Error('Nhập tên thiết bị');
+function AddEquipmentModal({
+  branches,
+  existingCount,
+  onClose,
+  onSaved,
+}: {
+  branches: { id: string; name: string }[];
+  existingCount: (branchId: string) => number;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [f, setF] = useState({ name: '', category: 'Cardio', branchId: branches[0]?.id ?? '', qty: 1 });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const save = async () => {
+    if (!f.name.trim()) return setErr('Nhập tên thiết bị');
+    if (!f.branchId) return setErr('Chọn chi nhánh');
+
+    setSaving(true);
+    setErr('');
+    try {
+      const base = existingCount(f.branchId);
+      const prefix = f.branchId.slice(0, 6).toUpperCase();
       for (let i = 0; i < f.qty; i++) {
-        const n = d.equipment.filter((e) => e.branchId === f.branchId).length + 1;
-        d.equipment.push({ id: genId('eq'), branchId: f.branchId, name: f.name, category: f.category, code: `${f.branchId.toUpperCase()}-${String(n).padStart(3, '0')}`, status: 'active', addedAt: todayStr() });
+        await equipmentsApi.create({
+          branchId: f.branchId,
+          name: f.name.trim(),
+          category: f.category,
+          code: `${prefix}-${String(base + i + 1).padStart(3, '0')}`,
+          status: 'active',
+        });
       }
-      return true;
-    }, `Đã thêm ${f.qty} thiết bị`);
-    if (r) onClose();
+      await onSaved();
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Thêm thiết bị thất bại');
+    } finally {
+      setSaving(false);
+    }
   };
+
   return (
-    <Modal title="Thêm thiết bị mới" onClose={onClose} footer={<><button className="btn" onClick={onClose}>Hủy</button><button className="btn primary" onClick={save} id="equipment-save">Thêm</button></>}>
+    <Modal
+      title="Thêm thiết bị mới"
+      onClose={onClose}
+      footer={<>
+        <button className="btn" onClick={onClose}>Hủy</button>
+        <button className="btn primary" disabled={saving} onClick={save} id="equipment-save">{saving ? 'Đang thêm...' : 'Thêm'}</button>
+      </>}
+    >
+      {err && <div className="small mb12" style={{ color: 'var(--red)' }}>{err}</div>}
       <div className="form-grid">
         <div className="field full"><label>Tên thiết bị</label><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} id="equipment-name" /></div>
         <div className="field"><label>Loại</label><select className="input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{['Cardio', 'Sức mạnh', 'Tạ tự do', 'Phụ kiện'].map((c) => <option key={c}>{c}</option>)}</select></div>
         <div className="field"><label>Số lượng</label><input type="number" min={1} className="input" value={f.qty} onChange={(e) => setF({ ...f, qty: Math.max(1, +e.target.value) })} /></div>
-        <div className="field full"><label>Chi nhánh</label><select className="input" value={f.branchId} onChange={(e) => setF({ ...f, branchId: e.target.value })}>{db.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+        <div className="field full"><label>Chi nhánh</label><select className="input" value={f.branchId} onChange={(e) => setF({ ...f, branchId: e.target.value })}>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
       </div>
     </Modal>
   );

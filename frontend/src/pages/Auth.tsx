@@ -40,7 +40,7 @@ function Hero() {
 const DEMO = [
   ['hoivien@ooad.vn', 'm1'],
   ['pt@ooad.vn', 'tr1'],
-  ['letan@ooad.vn', 'rc1'],
+  ['letan@ooad.vn', 'rc1'], 
   ['admin@ooad.vn', 'admin'],
 ];
 
@@ -50,9 +50,27 @@ export function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   if (user) return <Navigate to={homeOf(user.role)} replace />;
-  const submit = (e?: React.FormEvent, em = email, pw = password) => {
+const submit = async (e?: React.FormEvent, em = email, pw = password) => {
     e?.preventDefault();
     try {
+      // 1. Gọi API đăng nhập thật tới Backend .NET (cổng 5111)
+      const res = await fetch('http://localhost:5111/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: em, password: pw }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || 'Đăng nhập thất bại');
+      }
+
+      const data = await res.json();
+      
+      // 2. Lưu token thật vào localStorage với đúng key mà apiClient đang dùng
+      localStorage.setItem('ooad_jwt_token', data.token);
+
+      // 3. Xử lý logic state giả lập sẵn có của app để chuyển trang mượt mà
       const u = L.login(db, em, pw);
       login(u);
       toast(`Xin chào, ${u.fullName}!`);

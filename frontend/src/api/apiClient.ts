@@ -1,4 +1,4 @@
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5111/api';
 export const TOKEN_KEY = 'ooad_jwt_token';
 
 export function getAuthToken(): string | null {
@@ -28,28 +28,39 @@ export async function request<T>(endpoint: string, options?: RequestInit): Promi
     headers,
   });
 
+  // Đọc response body dưới dạng text đúng 1 lần duy nhất để tránh lỗi stream already read
+  const responseText = await response.text();
+  let data: any = null;
+  
+  if (responseText) {
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      data = responseText;
+    }
+  }
+
   if (!response.ok) {
     let errorMessage = response.statusText;
-    try {
-      const errorData = (await response.json()) as { message?: string };
-      if (errorData?.message) {
-        errorMessage = errorData.message;
+    
+    if (data) {
+      if (typeof data === 'object' && data.message) {
+        errorMessage = data.message;
+      } else if (typeof data === 'string') {
+        errorMessage = data;
       }
-    } catch {
-      const errorText = await response.text();
-      if (errorText) errorMessage = errorText;
     }
 
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       setAuthToken(null);
     }
 
     throw new Error(errorMessage || `API Error [${response.status}]`);
   }
 
-  if (response.status === 204) {
+  if (response.status === 204 || !responseText) {
     return {} as T;
   }
 
-  return response.json() as Promise<T>;
+  return data as T;
 }
