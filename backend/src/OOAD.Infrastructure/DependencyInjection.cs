@@ -51,6 +51,7 @@ public static class DependencyInjection
         services.AddScoped<IMetricTypeRepository, MetricTypeRepository>();
         services.AddScoped<IMeasurementValueRepository, MeasurementValueRepository>();
         services.AddScoped<IGymNewsRepository, GymNewsRepository>();
+            
 
         return services;
     }

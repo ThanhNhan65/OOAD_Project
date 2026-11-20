@@ -148,6 +148,35 @@ public class JwtAuthenticationHandler : AuthenticationHandler<AuthenticationSche
             };
 
             var principal = tokenHandler.ValidateToken(token, validationParameters, out _);
+
+            if (principal.Identity is ClaimsIdentity identity)
+            {
+                var emailClaim = identity.FindFirst(ClaimTypes.Email)?.Value 
+                    ?? identity.FindFirst("email")?.Value;
+
+                var hasRole = identity.HasClaim(c => c.Type == ClaimTypes.Role);
+
+                if (!hasRole)
+                {
+                    // Tự động gán quyền Admin nếu là tài khoản admin mẫu
+                    if (!string.IsNullOrEmpty(emailClaim) && emailClaim.Equals("admin@ooad.vn", StringComparison.OrdinalIgnoreCase))
+                    {
+                        identity.AddClaim(new Claim(ClaimTypes.Role, "Admin"));
+                    }
+                    else
+                    {
+                        var roleClaim = identity.FindFirst("role") 
+                            ?? identity.FindFirst("Rol") 
+                            ?? identity.FindFirst("http://schemas.microsoft.com/ws/2008/06/identity/claims/role");
+                        
+                        if (roleClaim != null)
+                        {
+                            identity.AddClaim(new Claim(ClaimTypes.Role, roleClaim.Value));
+                        }
+                    }
+                }
+            }
+
             var ticket = new AuthenticationTicket(principal, Scheme.Name);
             return Task.FromResult(AuthenticateResult.Success(ticket));
         }

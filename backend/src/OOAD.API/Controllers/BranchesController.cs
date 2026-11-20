@@ -56,4 +56,20 @@ public class BranchesController : ApiControllerBase
         var created = await _branchService.CreateBranchAsync(dto, cancellationToken);
         return CreatedAtAction(nameof(GetBranchById), new { id = created.Id }, created);
     }
+    /// <summary>
+/// Cập nhật thông tin chi nhánh
+/// </summary>
+[HttpPut("{id:guid}")]
+[ProducesResponseType(typeof(BranchDto), StatusCodes.Status200OK)]
+[ProducesResponseType(StatusCodes.Status404NotFound)]
+public async Task<ActionResult<BranchDto>> UpdateBranch(Guid id, [FromBody] UpdateBranchDto dto, CancellationToken cancellationToken)
+{
+    var updated = await _branchService.UpdateBranchAsync(id, dto, cancellationToken);
+    if (updated == null)
+    {
+        return NotFound(new { message = $"Không tìm thấy chi nhánh với mã: {id}" });
+    }
+
+    return Ok(updated);
+}
 }

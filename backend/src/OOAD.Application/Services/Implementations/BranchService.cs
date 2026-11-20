@@ -1,15 +1,11 @@
+using Microsoft.EntityFrameworkCore;
 using OOAD.Application.Common.Interfaces;
 using OOAD.Application.DTOs.Branch;
 using OOAD.Application.Services.Interfaces;
 using OOAD.Domain.Entities;
-using Microsoft.EntityFrameworkCore;
 
 namespace OOAD.Application.Services.Implementations;
 
-/// <summary>
-/// Triển khai nghiệp vụ cho Chi nhánh.
-/// Tuân thủ quy tắc: Tầng Service đảm nhận Business Logic & truy xuất dữ liệu thông qua IApplicationDbContext.
-/// </summary>
 public class BranchService : IBranchService
 {
     private readonly IAppDbContext _context;
@@ -67,6 +63,31 @@ public class BranchService : IBranchService
         };
 
         _context.Branches.Add(branch);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return new BranchDto(
+            branch.Id,
+            branch.Name,
+            branch.District,
+            branch.Address,
+            branch.PhoneNumber,
+            branch.OperatingHours,
+            branch.IsActive
+        );
+    }
+
+    public async Task<BranchDto?> UpdateBranchAsync(Guid id, UpdateBranchDto dto, CancellationToken cancellationToken = default)
+    {
+        var branch = await _context.Branches.FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
+        if (branch == null) return null;
+
+        branch.Name = dto.Name;
+        branch.District = dto.District;
+        branch.Address = dto.Address;
+        branch.PhoneNumber = dto.PhoneNumber;
+        branch.OperatingHours = dto.OperatingHours;
+        branch.IsActive = dto.IsActive;
+
         await _context.SaveChangesAsync(cancellationToken);
 
         return new BranchDto(
