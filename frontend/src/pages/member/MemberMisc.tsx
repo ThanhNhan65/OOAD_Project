@@ -1,8 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 import {
   Save, Plus, Scale, Ruler, Percent, Dumbbell, Activity, Receipt, Wrench, QrCode, MapPin, Clock, Trash2,
-  Sparkles, Utensils, Apple, Eye, Copy, Check, History,
+  Sparkles, Utensils, Apple, Eye, Copy, Check, History, RefreshCw,
 } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
 import * as L from '../../store/logic';
@@ -10,6 +10,7 @@ import { Avatar, Badge, Empty, Modal, PageHead, StatCard, Tabs } from '../../com
 import { methodLabel, reportLabel, eqLabel } from '../../components/labels';
 import { MemberCardWidget } from '../../components/member-card';
 import { fmtDate, fmtDateTime, fmtMoney, todayStr, calcBMI, bmiLabel, uid as genId, fmtTime } from '../../utils';
+import { bodyMeasurementsApi, type ApiBodyMeasurementDto, type ApiNutritionPlanDto } from '../../api/bodyMeasurementsApi';
 import type { User, BodyMetric } from '../../types';
 
 /* ================= Hồ sơ ================= */
@@ -82,19 +83,54 @@ interface ChartClickState {
 
 /* ================= Tiến độ & AI Dinh Dưỡng ================= */
 export function MemberProgress() {
-  const { db, user, act } = useApp();
+  const { db, user, act, toast } = useApp();
   const [activeTab, setActiveTab] = useState<'progress' | 'nutrition'>('progress');
   const [openAddModal, setOpenAddModal] = useState(false);
   const [inspectedMetric, setInspectedMetric] = useState<BodyMetric | null>(null);
   const [selectedMilestoneId, setSelectedMilestoneId] = useState<string | null>(null);
   const [metricKey, setMetricKey] = useState<MetricKey>('weight');
   const [compareKey, setCompareKey] = useState<MetricKey | 'none'>('muscleMass');
+  const [apiMeasurements, setApiMeasurements] = useState<ApiBodyMeasurementDto[] | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const list = useMemo(() => {
+  const fetchMeasurements = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await bodyMeasurementsApi.getMyMeasurements();
+      setApiMeasurements(data);
+    } catch {
+      // offline fallback
+      setApiMeasurements(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchMeasurements();
+  }, [fetchMeasurements]);
+
+  const list: BodyMetric[] = useMemo(() => {
+    if (apiMeasurements && apiMeasurements.length > 0) {
+      return apiMeasurements.map((m) => ({
+        id: m.id,
+        memberId: m.memberId,
+        date: m.measuredAt.slice(0, 10),
+        weight: Number(m.weight),
+        height: Number(m.height || 175),
+        bmi: Number(m.bmi || 24),
+        bodyFat: m.bodyFat ? Number(m.bodyFat) : undefined,
+        muscleMass: m.muscleMass ? Number(m.muscleMass) : undefined,
+        waist: m.waist ? Number(m.waist) : undefined,
+        chest: m.chest ? Number(m.chest) : undefined,
+        hips: m.hips ? Number(m.hips) : undefined,
+        note: m.note,
+      })).sort((a, b) => a.date.localeCompare(b.date));
+    }
     return db.bodyMetrics
       .filter((m) => m.memberId === user!.id)
       .sort((a, b) => a.date.localeCompare(b.date));
-  }, [db.bodyMetrics, user]);
+  }, [apiMeasurements, db.bodyMetrics, user]);
 
   const first = list[0];
   const last = list.at(-1);
@@ -662,6 +698,7 @@ export function MemberProgress() {
           lastChest={last?.chest}
           lastWaist={last?.waist}
           lastHips={last?.hips}
+          onSaved={fetchMeasurements}
           onClose={() => setOpenAddModal(false)}
         />
       )}
@@ -917,6 +954,7 @@ function MetricModal({
   lastChest,
   lastWaist,
   lastHips,
+  onSaved,
   onClose,
 }: {
   lastHeight?: number;
@@ -926,9 +964,10 @@ function MetricModal({
   lastChest?: number;
   lastWaist?: number;
   lastHips?: number;
+  onSaved?: () => void;
   onClose: () => void;
 }) {
-  const { user, act } = useApp();
+  const { user, act, toast } = useApp();
   const [f, setF] = useState({
     date: todayStr(),
     weight: String(lastWeight ?? ''),
@@ -943,13 +982,14 @@ function MetricModal({
 
   const bmi = calcBMI(+f.weight, +f.height);
 
-  const save = () => {
-    const r = act((d) => {
-      if (!+f.weight || !+f.height) throw new Error('Vui lòng nhập cân nặng và chiều cao hợp lệ');
-      d.bodyMetrics.push({
-        id: genId('bm'),
-        memberId: user!.id,
-        date: f.date,
+  const save = async () => {
+    if (!+f.weight || !+f.height) {
+      toast('Vui lòng nhập cân nặng và chiều cao hợp lệ', 'error');
+      return;
+    }
+
+    try {
+      await bodyMeasurementsApi.createMeasurement({
         weight: +f.weight,
         height: +f.height,
         bmi,
@@ -959,10 +999,34 @@ function MetricModal({
         waist: f.waist ? +f.waist : undefined,
         hips: f.hips ? +f.hips : undefined,
         note: f.note,
+        measuredAt: f.date ? `${f.date}T00:00:00Z` : undefined,
       });
-      return true;
-    }, 'Đã lưu mốc đo chỉ số cơ thể');
-    if (r) onClose();
+      toast('Đã lưu mốc đo chỉ số cơ thể thành công', 'success');
+      onSaved?.();
+      onClose();
+    } catch {
+      const r = act((d) => {
+        d.bodyMetrics.push({
+          id: genId('bm'),
+          memberId: user!.id,
+          date: f.date,
+          weight: +f.weight,
+          height: +f.height,
+          bmi,
+          bodyFat: f.bodyFat ? +f.bodyFat : undefined,
+          muscleMass: f.muscleMass ? +f.muscleMass : undefined,
+          chest: f.chest ? +f.chest : undefined,
+          waist: f.waist ? +f.waist : undefined,
+          hips: f.hips ? +f.hips : undefined,
+          note: f.note,
+        });
+        return true;
+      }, 'Đã lưu mốc đo chỉ số cơ thể');
+      if (r) {
+        onSaved?.();
+        onClose();
+      }
+    }
   };
 
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });

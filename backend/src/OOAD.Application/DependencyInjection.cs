@@ -15,6 +15,9 @@ public static class DependencyInjection
         services.AddScoped<ICheckinService, CheckinService>();
         services.AddScoped<IGymClassService, GymClassService>();
         services.AddScoped<IClassBookingService, ClassBookingService>();
+        services.AddScoped<IPersonalTrainerService, PersonalTrainerService>();
+        services.AddScoped<IBodyMeasurementService, BodyMeasurementService>();
+        services.AddScoped<IReviewService, ReviewService>();
         return services;
     }
 }

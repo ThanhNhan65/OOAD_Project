@@ -34,6 +34,7 @@ import { addDays, todayStr, fmtTime, fmtDate, WEEKDAYS, parseDate, fmtDateTime, 
 import { classesApi, type ApiClassSessionDetailDto, type ApiClassSessionDto } from '../../api/classesApi';
 import { bookingsApi, type ApiMyScheduleSummaryDto } from '../../api/bookingsApi';
 import { branchesApi } from '../../api/branchesApi';
+import { ptApi, type ApiPtBalanceDto } from '../../api/ptApi';
 import { getAuthToken, isApiNetworkError } from '../../api/apiClient';
 
 type PeriodKey = 'morning' | 'afternoon' | 'evening';
@@ -1043,7 +1044,7 @@ const PT_GOAL_SUGGESTIONS = [
 ];
 
 export function MemberPT() {
-  const { db, user, act } = useApp();
+  const { db, user, act, toast } = useApp();
   const allTrainers = db.users.filter((u) => u.role === 'trainer' && !u.locked);
 
   const [searchTrainer, setSearchTrainer] = useState('');
@@ -1054,8 +1055,16 @@ export function MemberPT() {
   const [note, setNote] = useState('');
   const [timeOfDay, setTimeOfDay] = useState<'all' | 'morning' | 'afternoon' | 'evening'>('all');
   const [selectedDate, setSelectedDate] = useState<string>('all');
+  const [apiBalance, setApiBalance] = useState<ApiPtBalanceDto | null>(null);
 
-  const bal = L.ptBalance(db, user!.id);
+  useEffect(() => {
+    ptApi.getPtBalance().then(setApiBalance).catch(() => {});
+  }, []);
+
+  const localBal = L.ptBalance(db, user!.id);
+  const bal = apiBalance
+    ? { total: apiBalance.total, free: apiBalance.freeSessions, pkg: apiBalance.packageSessions }
+    : localBal;
   const tr = L.userById(db, tid);
   const now = Date.now();
 
@@ -1118,12 +1127,20 @@ export function MemberPT() {
     return { avg: rs.length ? rs.reduce((a, r) => a + r.rating, 0) / rs.length : 0, n: rs.length };
   };
 
-  const book = () => {
+  const book = async () => {
     if (!slot) return;
-    const r = act((d) => L.bookPT(d, user!.id, slot, note), 'Đã gửi yêu cầu đặt lịch, chờ HLV xác nhận');
-    if (r) {
+    try {
+      await ptApi.bookPt({ availabilityId: slot, note });
+      toast('Đã gửi yêu cầu đặt lịch đến HLV thành công!', 'success');
       setSlot(null);
       setNote('');
+      ptApi.getPtBalance().then(setApiBalance).catch(() => {});
+    } catch {
+      const r = act((d) => L.bookPT(d, user!.id, slot, note), 'Đã gửi yêu cầu đặt lịch, chờ HLV xác nhận');
+      if (r) {
+        setSlot(null);
+        setNote('');
+      }
     }
   };
 
