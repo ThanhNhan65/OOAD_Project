@@ -59,6 +59,13 @@ function RootRedirect() {
   return <Navigate to={homeOf(user.role)} replace />;
 }
 
+function RoleProfileRedirect() {
+  const { user } = useApp();
+  if (!user) return <Navigate to="/login" replace />;
+  const rolePath = user.role === 'receptionist' ? 'staff' : user.role;
+  return <Navigate to={`/${rolePath}/profile`} replace />;
+}
+
 export default function App() {
   return (
     <AppProvider>
@@ -104,6 +111,7 @@ export default function App() {
             <Route path="equipment" element={<EquipmentManage />} />
             <Route path="members" element={<StaffMembers />} />
             <Route path="member-cards" element={<StaffMemberCards />} />
+            <Route path="profile" element={<AccountPage />} />
           </Route>
 
           {/* Admin Routes */}
@@ -117,13 +125,14 @@ export default function App() {
             <Route path="equipment" element={<EquipmentManage />} />
             <Route path="checkins" element={<CheckinHistory />} />
             <Route path="settings" element={<AdminSettings />} />
+            <Route path="profile" element={<AccountPage />} />
           </Route>
 
           {/* Shared Authenticated Routes */}
           <Route element={<SharedLayout />}>
             <Route path="/notifications" element={<NotificationsPage />} />
-            <Route path="/account" element={<AccountPage />} />
-            <Route path="/profile" element={<AccountPage />} />
+            <Route path="/account" element={<RoleProfileRedirect />} />
+            <Route path="/profile" element={<RoleProfileRedirect />} />
             <Route path="/rules" element={<GymRules />} />
             {/* Trainers Directory for Members */}
             <Route path="/trainers" element={<TrainersListPage />} />

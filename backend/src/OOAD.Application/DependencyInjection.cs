@@ -16,6 +16,7 @@ public static class DependencyInjection
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IGymRuleService, GymRuleService>();
         services.AddScoped<IReportService, ReportService>();
+        services.AddScoped<ISystemSettingService, SystemSettingService>();
         return services;
     }
 }

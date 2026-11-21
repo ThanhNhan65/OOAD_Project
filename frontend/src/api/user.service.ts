@@ -84,6 +84,20 @@ export const userService = {
     });
   },
 
+  async updateUserByAdmin(id: string, payload: Partial<CreateStaffPayload>): Promise<ApiUserDto> {
+    return request<ApiUserDto>(`/users/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async resetUserPassword(id: string, newPassword?: string): Promise<ApiUserDto> {
+    return request<ApiUserDto>(`/users/${id}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ newPassword }),
+    });
+  },
+
   async searchMembers(search?: string): Promise<ApiMemberDto[]> {
     const qs = search ? `?search=${encodeURIComponent(search)}` : '';
     return request<ApiMemberDto[]>(`/members${qs}`);

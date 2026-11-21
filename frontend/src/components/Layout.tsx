@@ -70,7 +70,7 @@ function useNav(role: Role): { section: string; items: NavItem[] }[] {
           { to: '/staff/equipment', label: 'Thiết bị & sự cố', icon: <Wrench size={s} />, count: pendingEq },
           { to: '/staff/members', label: 'Tra cứu hội viên', icon: <Users size={s} /> },
         ] },
-        { section: 'Tài khoản', items: [{ to: '/account', label: 'Tài khoản', icon: <KeyRound size={s} /> }] },
+        { section: 'Tài khoản', items: [{ to: '/staff/profile', label: 'Hồ sơ nhân viên', icon: <UserIcon size={s} /> }] },
       ];
     case 'admin':
       return [
@@ -86,6 +86,9 @@ function useNav(role: Role): { section: string; items: NavItem[] }[] {
           { to: '/admin/equipment', label: 'Thiết bị', icon: <Wrench size={s} />, count: pendingEq },
           { to: '/admin/checkins', label: 'Lịch sử check-in', icon: <History size={s} /> },
           { to: '/admin/settings', label: 'Cấu hình hệ thống', icon: <Settings size={s} /> },
+        ] },
+        { section: 'Cá nhân', items: [
+          { to: '/admin/profile', label: 'Hồ sơ quản trị viên', icon: <UserIcon size={s} /> },
         ] },
       ];
   }
@@ -266,7 +269,12 @@ export function Layout({ role }: { role: Role }) {
             )}
           </button>
           <NotificationBell />
-          <div className="row" style={{ gap: 10 }}>
+          <div
+            className="row"
+            style={{ gap: 10, cursor: 'pointer' }}
+            onClick={() => nav(`/${user.role === 'receptionist' ? 'staff' : user.role}/profile`)}
+            title="Xem & chỉnh sửa hồ sơ cá nhân"
+          >
             <Avatar user={user} />
             <div style={{ lineHeight: 1.25 }}>
               <div className="bold" style={{ fontSize: 13.5 }}>{user.fullName}</div>

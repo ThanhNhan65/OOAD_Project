@@ -9,3 +9,4 @@ export * from './membershipPlansApi';
 export * from './checkinsApi';
 export * from './memberCard.service';
 export * from './trainer.service';
+export * from './settings.service';
