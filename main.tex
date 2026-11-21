@@ -1,0 +1,493 @@
+\documentclass[12pt,a4paper]{report}
+
+% ==============================================================================
+% CẤU HÌNH TIẾNG VIỆT CHUẨN XÁC VÀ ĐẦY ĐỦ NHẤT (OVERLEAF / PDFLATEX / XELATEX)
+% ==============================================================================
+\usepackage[utf8]{inputenc}
+\usepackage[T5,T1]{fontenc}
+\usepackage[vietnamese]{babel}
+
+% Các gói hỗ trợ giao diện, bảng biểu, hình ảnh
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{float}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{setspace}
+\onehalfspacing
+
+% Định dạng lề trang chuẩn đồ án môn học
+\usepackage{geometry}
+\geometry{
+    a4paper,
+    left=30mm,
+    right=20mm,
+    top=25mm,
+    bottom=25mm
+}
+
+% Cấu hình hyperlink tài liệu
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=red,urlcolor=magenta]{hyperref}
+
+% Thư mục chứa hình ảnh
+\graphicspath{{img/}}
+
+\begin{document}
+
+\chapter{THIẾT KẾ GIAO DIỆN NGƯỜI DÙNG}
+\label{chap:thietkegiaodien}
+
+\section{Tổng quan và Nguyên tắc thiết kế}
+
+\subsection{Mục tiêu thiết kế}
+Giao diện người dùng (User Interface - UI) của hệ thống quản lý chuỗi phòng gym DFGymCenter được thiết kế nhằm đạt được các mục tiêu cốt lõi sau:
+\begin{itemize}
+    \item \textbf{Tính trực quan và dễ sử dụng (Usability):} Bố cục màn hình rõ ràng, các thành phần tương tác quen thuộc giúp người dùng thao tác nhanh chóng mà không cần qua đào tạo phức tạp.
+    \item \textbf{Tính nhất quán (Consistency):} Thống nhất về Look \& Feel, bảng màu chủ đạo (Design Tokens), hệ thống font chữ, kích thước nút bấm và cách thức phản hồi trạng thái (Success, Warning, Error) trên toàn bộ các phân hệ.
+    \item \textbf{Tính công thái học (Ergonomics):} Giảm thiểu số lần nhấp chuột (clicks), bố trí các trường nhập liệu logic từ trên xuống dưới, từ trái qua phải; tối ưu hóa luồng làm việc cho nhân viên tiếp tân và huấn luyện viên.
+    \item \textbf{Phân quyền theo vai trò (Role-based UI):} Mỗi nhóm đối tượng người dùng (Khách/Hội viên, Huấn luyện viên, Nhân viên Lễ tân, Quản trị viên) sở hữu không gian làm việc chuyên biệt, chỉ hiển thị đúng các chức năng thuộc thẩm quyền.
+\end{itemize}
+
+\subsection{Quy chuẩn giao diện (Look \& Feel)}
+\begin{itemize}
+    \item \textbf{Chế độ hiển thị:} Hỗ trợ cả 2 chế độ Sáng dịu (Light Mode) và Tối hiện đại (Dark Mode), giảm mỏi mắt khi nhân viên làm việc trong ca trực dài.
+    \item \textbf{Bảng màu chủ đạo (Color Palette):}
+    \begin{itemize}
+        \item Màu nhấn thương hiệu (Primary Brand): \texttt{\#ec4899} (Pink Accent) và \texttt{\#7c5cff} (Purple Gradient).
+        \item Màu phản hồi trạng thái: Thành công (\texttt{\#2ed47a} - Xanh lá), Cảnh báo (\texttt{\#ffb020} - Vàng hổ phách), Nguy hiểm/Lỗi (\texttt{\#ff4d6d} - Đỏ), Thông tin (\texttt{\#3fa9ff} - Xanh dương).
+    \end{itemize}
+    \item \textbf{Hộp thoại \& Thông báo:} Sử dụng hệ thống thông báo đẩy (Toast Notification) tại góc màn hình và hộp thoại xác nhận (Modal Confirmation) đối với các tác vụ quan trọng (khóa tài khoản, lưu cấu hình).
+\end{itemize}
+
+\subsection{Cấu trúc hệ thống thực đơn điều hướng (Menu Hierarchy)}
+Hệ thống áp dụng thanh điều hướng bên (Sidebar Navigation) phân theo vai trò kết hợp thanh tiêu đề (Topbar) chứa chức năng truy cập nhanh tài khoản cá nhân:
+\begin{itemize}
+    \item \textbf{Hội viên (Member):} Trang chủ $\rightarrow$ Lớp học $\rightarrow$ Đặt lịch PT $\rightarrow$ Tiến độ cơ thể $\rightarrow$ Gói tập $\rightarrow$ Hồ sơ cá nhân (\texttt{/member/profile}).
+    \item \textbf{Huấn luyện viên (Trainer):} Lịch hẹn 1-kèm-1 $\rightarrow$ Khung giờ rảnh $\rightarrow$ Lớp dạy $\rightarrow$ Đánh giá $\rightarrow$ Hồ sơ chuyên môn (\texttt{/trainer/profile}).
+    \item \textbf{Nhân viên Lễ tân (Receptionist/Staff):} Bàn trực $\rightarrow$ Điểm danh Check-in $\rightarrow$ Thẻ hội viên $\rightarrow$ Yêu cầu Freeze $\rightarrow$ Thiết bị $\rightarrow$ Hồ sơ nhân viên (\texttt{/staff/profile}).
+    \item \textbf{Quản trị viên (Admin):} Dashboard $\rightarrow$ Quản lý tài khoản $\rightarrow$ Chi nhánh $\rightarrow$ Gói tập $\rightarrow$ Lớp học $\rightarrow$ Cấu hình hệ thống (\texttt{/admin/settings}) $\rightarrow$ Hồ sơ quản trị (\texttt{/admin/profile}).
+\end{itemize}
+
+\section{Đặc tả chi tiết các màn hình chức năng cốt lõi}
+
+% ==========================================
+% MH01: ĐĂNG NHẬP
+% ==========================================
+\subsection{MH01: Màn hình Đăng nhập (Login Screen)}
+
+\subsubsection{Mục tiêu và đối tượng sử dụng}
+\begin{itemize}
+    \item \textbf{Mục tiêu:} Xác thực danh tính người dùng vào hệ thống dựa trên Email và Mật khẩu. Hỗ trợ điều hướng chính xác về không gian làm việc theo vai trò sau khi đăng nhập thành công.
+    \item \textbf{Đối tượng sử dụng:} Toàn bộ người dùng (Khách, Hội viên, HLV, Lễ tân, Quản trị viên).
+    \item \textbf{Đường dẫn (URL):} \texttt{/login}
+\end{itemize}
+
+\subsubsection{Giao diện minh họa}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{img/mh01_login.png}
+    \caption{Giao diện màn hình Đăng nhập (MH01)}
+    \label{fig:mh01_login}
+\end{figure}
+
+\subsubsection{Bảng thành phần giao diện}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|l|X|}
+\hline
+\textbf{STT} & \textbf{Tên thành phần} & \textbf{Loại điều khiển} & \textbf{Ràng buộc dữ liệu} & \textbf{Ý nghĩa chức năng} \\ \hline
+1 & \texttt{login-email} & TextBox (Email) & Chuỗi, định dạng email & Nhập địa chỉ email đã đăng ký tài khoản. \\ \hline
+2 & \texttt{login-password} & TextBox (Password) & Chuỗi, ký tự che giấu & Nhập mật khẩu bảo mật của tài khoản. \\ \hline
+3 & \texttt{login-submit} & Button (Primary) & Clickable & Gửi yêu cầu đăng nhập lên hệ thống backend. \\ \hline
+4 & \texttt{go-register} & Hyperlink & Chuyển hướng & Chuyển sang màn hình tạo tài khoản mới (\texttt{/register}). \\ \hline
+5 & \texttt{go-kiosk} & Button (Ghost) & Chuyển hướng & Mở nhanh màn hình Kiosk tự check-in tại quầy. \\ \hline
+\end{tabularx}
+\caption{Bảng thành phần giao diện màn hình Đăng nhập (MH01)}
+\end{table}
+
+\subsubsection{Bảng biến cố và luồng thao tác}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|X|X|}
+\hline
+\textbf{STT} & \textbf{Biến cố (Action)} & \textbf{Điều kiện} & \textbf{Xử lý hệ thống (BCE)} & \textbf{Kết quả hiển thị} \\ \hline
+1 & Nhấn "Đăng nhập" & Bỏ trống trường & Client chặn submit & Hiển thị thông báo "Vui lòng nhập trường này". \\ \hline
+2 & Nhấn "Đăng nhập" & Thông tin sai & Gọi \texttt{POST /api/auth/login}, AuthService trả về 400 & Toast thông báo: "Email hoặc mật khẩu không chính xác". \\ \hline
+3 & Nhấn "Đăng nhập" & Tài khoản bị khóa & Status == \texttt{LOCKED} & Toast cảnh báo: "Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên." \\ \hline
+4 & Nhấn "Đăng nhập" & Thông tin hợp lệ & Xác thực BCrypt hash khớp, sinh JWT token & Lưu token, Toast chào mừng, chuyển hướng về Dashboard vai trò. \\ \hline
+\end{tabularx}
+\caption{Bảng biến cố màn hình Đăng nhập (MH01)}
+\end{table}
+
+% ==========================================
+% MH02: ĐĂNG KÝ HỘI VIÊN
+% ==========================================
+\subsection{MH02: Màn hình Đăng ký Hội viên (Member Registration)}
+
+\subsubsection{Mục tiêu và đối tượng sử dụng}
+\begin{itemize}
+    \item \textbf{Mục tiêu:} Cho phép khách hàng tự đăng ký mở tài khoản hội viên cá nhân trong hệ thống DFGymCenter.
+    \item \textbf{Đối tượng sử dụng:} Khách hàng mới (Guest).
+    \item \textbf{Đường dẫn (URL):} \texttt{/register} (Mặc định tab Hội viên)
+\end{itemize}
+
+\subsubsection{Giao diện minh họa}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{img/mh02_register_member.png}
+    \caption{Giao diện màn hình Đăng ký Hội viên (MH02)}
+    \label{fig:mh02_register_member}
+\end{figure}
+
+\subsubsection{Bảng thành phần giao diện}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|l|X|}
+\hline
+\textbf{STT} & \textbf{Tên thành phần} & \textbf{Loại điều khiển} & \textbf{Ràng buộc dữ liệu} & \textbf{Ý nghĩa chức năng} \\ \hline
+1 & \texttt{reg-role-member} & Chip Button & Mặc định active & Chọn đối tượng đăng ký là Hội viên. \\ \hline
+2 & \texttt{reg-name} & TextBox & Bắt buộc, chuỗi họ tên & Nhập họ và tên đầy đủ của hội viên. \\ \hline
+3 & \texttt{reg-email} & TextBox (Email) & Chuỗi, unique & Email liên hệ và làm tên đăng nhập. \\ \hline
+4 & \texttt{reg-phone} & TextBox & Bắt buộc, 10 số & Số điện thoại cá nhân (bắt đầu bằng 0). \\ \hline
+5 & Giới tính & Dropdown Select & Nam / Nữ / Khác & Lựa chọn giới tính. \\ \hline
+6 & Ngày sinh & Date Picker & YYYY-MM-DD & Lựa chọn ngày tháng năm sinh. \\ \hline
+7 & \texttt{reg-password} & TextBox (Password) & Tối thiểu 6 ký tự & Mật khẩu đăng nhập mới. \\ \hline
+8 & \texttt{reg-confirm} & TextBox (Password) & Khớp \texttt{reg-password} & Nhập lại mật khẩu để xác nhận tính chính xác. \\ \hline
+9 & \texttt{reg-submit} & Button (Primary) & Clickable & Thực hiện đăng ký tài khoản hội viên. \\ \hline
+\end{tabularx}
+\caption{Bảng thành phần giao diện màn hình Đăng ký Hội viên (MH02)}
+\end{table}
+
+\subsubsection{Bảng biến cố và luồng thao tác}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|X|X|}
+\hline
+\textbf{STT} & \textbf{Biến cố (Action)} & \textbf{Điều kiện} & \textbf{Xử lý hệ thống (BCE)} & \textbf{Kết quả hiển thị} \\ \hline
+1 & Nhấn "Đăng ký" & Mật khẩu xác nhận không khớp & Kiểm tra tại Boundary UI & Báo lỗi "Mật khẩu xác nhận không khớp". \\ \hline
+2 & Nhấn "Đăng ký" & Email đã tồn tại & \texttt{AuthService} kiểm tra CSDL bị trùng & Báo lỗi "Email đã được sử dụng bởi tài khoản khác". \\ \hline
+3 & Nhấn "Đăng ký" & Dữ liệu hợp lệ & Tạo User (Role=Member), mã thẻ khởi tạo, cấp token & Toast "Đăng ký thành công!", tự động đăng nhập và dẫn đến \texttt{/member/profile}. \\ \hline
+\end{tabularx}
+\caption{Bảng biến cố màn hình Đăng ký Hội viên (MH02)}
+\end{table}
+
+% ==========================================
+% MH03: ĐĂNG KÝ HUẤN LUYỆN VIÊN (PT)
+% ==========================================
+\subsection{MH03: Màn hình Đăng ký Huấn luyện viên (Trainer Registration)}
+
+\subsubsection{Mục tiêu và đối tượng sử dụng}
+\begin{itemize}
+    \item \textbf{Mục tiêu:} Thu thập hồ sơ ứng tuyển của Huấn luyện viên (PT) bao gồm chi nhánh phụ trách, chuyên môn và số năm kinh nghiệm.
+    \item \textbf{Đối tượng sử dụng:} Huấn luyện viên mới ứng tuyển vào chuỗi phòng gym.
+    \item \textbf{Đường dẫn (URL):} \texttt{/register?role=trainer} (Tab Huấn luyện viên)
+\end{itemize}
+
+\subsubsection{Giao diện minh họa}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{img/mh03_register_trainer.png}
+    \caption{Giao diện màn hình Đăng ký Huấn luyện viên (MH03)}
+    \label{fig:mh03_register_trainer}
+\end{figure}
+
+\subsubsection{Bảng thành phần giao diện}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|l|X|}
+\hline
+\textbf{STT} & \textbf{Tên thành phần} & \textbf{Loại điều khiển} & \textbf{Ràng buộc dữ liệu} & \textbf{Ý nghĩa chức năng} \\ \hline
+1 & \texttt{reg-role-trainer} & Chip Button & Active khi chọn HLV & Kích hoạt biểu mẫu đăng ký chuyên môn PT. \\ \hline
+2 & \texttt{reg-branch} & Dropdown Select & Bắt buộc & Chọn chi nhánh làm việc chính của HLV. \\ \hline
+3 & Chuyên môn & TextBox & Chuỗi ký tự & Các bộ môn giảng dạy (Gym, Yoga, HIIT...). \\ \hline
+4 & Số năm kinh nghiệm & Number Input & Số nguyên $\ge 0$ & Thâm niên trong nghề huấn luyện thể hình. \\ \hline
+5 & Thông tin cá nhân & Nhóm TextBoxes & Giống MH02 & Họ tên, email, số điện thoại, ngày sinh, mật khẩu. \\ \hline
+6 & \texttt{reg-submit} & Button (Primary) & Clickable & Gửi hồ sơ đăng ký HLV lên hệ thống. \\ \hline
+\end{tabularx}
+\caption{Bảng thành phần giao diện màn hình Đăng ký Huấn luyện viên (MH03)}
+\end{table}
+
+\subsubsection{Bảng biến cố và luồng thao tác}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|X|X|}
+\hline
+\textbf{STT} & \textbf{Biến cố (Action)} & \textbf{Điều kiện} & \textbf{Xử lý hệ thống (BCE)} & \textbf{Kết quả hiển thị} \\ \hline
+1 & Click Chip "HLV" & Khách hàng nhấn tab & Boundary mở rộng form & Hiển thị thêm các trường chi nhánh, chuyên môn, kinh nghiệm. \\ \hline
+2 & Nhấn "Đăng ký" & Chưa chọn chi nhánh & BranchId rỗng & Toast lỗi: "Huấn luyện viên bắt buộc phải chọn Chi nhánh!". \\ \hline
+3 & Nhấn "Đăng ký" & Dữ liệu hợp lệ & Tạo User (Role=Trainer), tạo hồ sơ chuyên môn & Toast "Đăng ký thành công!", chuyển hướng về trang \texttt{/trainer/profile}. \\ \hline
+\end{tabularx}
+\caption{Bảng biến cố màn hình Đăng ký Huấn luyện viên (MH03)}
+\end{table}
+
+% ==========================================
+% MH04: HỒ SƠ HỘI VIÊN
+% ==========================================
+\subsection{MH04: Màn hình Hồ sơ Hội viên (Member Profile)}
+
+\subsubsection{Mục tiêu và đối tượng sử dụng}
+\begin{itemize}
+    \item \textbf{Mục tiêu:} Giúp hội viên xem thông tin cá nhân, cập nhật số điện thoại, đổi mật khẩu và xuất trình Thẻ hội viên điện tử (Mã vạch / QR Code) để quét khi check-in tại quầy.
+    \item \textbf{Đối tượng sử dụng:} Người dùng có vai trò Hội viên (Member).
+    \item \textbf{Đường dẫn (URL):} \texttt{/member/profile}
+\end{itemize}
+
+\subsubsection{Giao diện minh họa}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{img/mh04_profile_member.png}
+    \caption{Giao diện màn hình Hồ sơ Hội viên (MH04)}
+    \label{fig:mh04_profile_member}
+\end{figure}
+
+\subsubsection{Bảng thành phần giao diện}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|l|X|}
+\hline
+\textbf{STT} & \textbf{Tên thành phần} & \textbf{Loại điều khiển} & \textbf{Ràng buộc dữ liệu} & \textbf{Ý nghĩa chức năng} \\ \hline
+1 & Thẻ tóm tắt hội viên & Card Panel & Read-only & Hiển thị Avatar, Họ tên, Email, Mã thẻ từ và ngày tham gia. \\ \hline
+2 & \texttt{profile-name} & TextBox & Bắt buộc & Chỉnh sửa họ và tên hội viên. \\ \hline
+3 & \texttt{profile-phone} & TextBox & Bắt buộc, 10 số & Cập nhật số điện thoại liên lạc. \\ \hline
+4 & \texttt{profile-save} & Button (Primary) & Clickable & Lưu các thay đổi thông tin cá nhân. \\ \hline
+5 & Form đổi mật khẩu & Group Inputs & Mật khẩu cũ \& mới & Cập nhật mật khẩu bảo mật tài khoản. \\ \hline
+6 & \texttt{MemberCardWidget} & Custom Component & Dynamic QR & Hiển thị thẻ điện tử, mã QR động phục vụ check-in, nút báo mất thẻ. \\ \hline
+\end{tabularx}
+\caption{Bảng thành phần giao diện màn hình Hồ sơ Hội viên (MH04)}
+\end{table}
+
+\subsubsection{Bảng biến cố và luồng thao tác}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|X|X|}
+\hline
+\textbf{STT} & \textbf{Biến cố (Action)} & \textbf{Điều kiện} & \textbf{Xử lý hệ thống (BCE)} & \textbf{Kết quả hiển thị} \\ \hline
+1 & Nhấn "Lưu thay đổi" & Họ tên rỗng & Client validate & Thông báo lỗi "Họ tên không được để trống". \\ \hline
+2 & Nhấn "Lưu thay đổi" & Hợp lệ & Gọi \texttt{PUT /api/users/me}, cập nhật Entity User & Toast thông báo "Đã lưu hồ sơ thành công". \\ \hline
+3 & Đổi mật khẩu & Sai mật khẩu cũ & Kiểm tra mật khẩu hiện tại & Báo lỗi "Mật khẩu hiện tại không đúng". \\ \hline
+4 & Đổi mật khẩu & Khớp và an toàn & Hash mật khẩu mới, cập nhật CSDL & Toast "Đổi mật khẩu thành công", làm trống form đổi mật khẩu. \\ \hline
+5 & Nhấn "Báo mất thẻ" & Thẻ đang active & Cập nhật trạng thái thẻ sang \texttt{LOST} & Hiển thị cảnh báo thẻ đã bị khóa, hướng dẫn liên hệ lễ tân cấp thẻ mới. \\ \hline
+\end{tabularx}
+\caption{Bảng biến cố màn hình Hồ sơ Hội viên (MH04)}
+\end{table}
+
+% ==========================================
+% MH05: HỒ SƠ HUẤN LUYỆN VIÊN
+% ==========================================
+\subsection{MH05: Màn hình Hồ sơ Huấn luyện viên (Trainer Profile)}
+
+\subsubsection{Mục tiêu và đối tượng sử dụng}
+\begin{itemize}
+    \item \textbf{Mục tiêu:} Cho phép Huấn luyện viên cập nhật thông tin năng lực chuyên môn, số năm kinh nghiệm, chứng chỉ quốc tế và các chi nhánh nhận dạy để hội viên tra cứu khi đặt lịch PT 1-kèm-1.
+    \item \textbf{Đối tượng sử dụng:} Người dùng có vai trò Huấn luyện viên (Trainer).
+    \item \textbf{Đường dẫn (URL):} \texttt{/trainer/profile}
+\end{itemize}
+
+\subsubsection{Giao diện minh họa}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{img/mh05_profile_trainer.png}
+    \caption{Giao diện màn hình Hồ sơ Huấn luyện viên (MH05)}
+    \label{fig:mh05_profile_trainer}
+\end{figure}
+
+\subsubsection{Bảng thành phần giao diện}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|l|X|}
+\hline
+\textbf{STT} & \textbf{Tên thành phần} & \textbf{Loại điều khiển} & \textbf{Ràng buộc dữ liệu} & \textbf{Ý nghĩa chức năng} \\ \hline
+1 & Thẻ tóm tắt năng lực & Card Panel & Read-only preview & Hiển thị Badge các chuyên môn chính, số sao đánh giá và thâm niên. \\ \hline
+2 & \texttt{trainer-spec} & TextBox & Chuỗi phân tách phẩy & Danh mục chuyên môn (Yoga, Gym, HIIT, Phục hồi chức năng...). \\ \hline
+3 & Chứng chỉ & TextBox & Chuỗi & Các chứng nhận chuyên nghiệp (ACE, NASM, ISSA...). \\ \hline
+4 & Giới thiệu (Bio) & TextArea & Đoạn văn bản & Mô tả phong cách huấn luyện và thành tích cá nhân. \\ \hline
+5 & Chi nhánh nhận dạy & Multi-select Chips & Chọn $\ge 1$ chi nhánh & Danh sách các phòng tập mà HLV có thể đến dạy. \\ \hline
+6 & \texttt{trainer-save} & Button (Primary) & Clickable & Lưu cập nhật hồ sơ chuyên môn vào hệ thống. \\ \hline
+\end{tabularx}
+\caption{Bảng thành phần giao diện màn hình Hồ sơ Huấn luyện viên (MH05)}
+\end{table}
+
+\subsubsection{Bảng biến cố và luồng thao tác}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|X|X|}
+\hline
+\textbf{STT} & \textbf{Biến cố (Action)} & \textbf{Điều kiện} & \textbf{Xử lý hệ thống (BCE)} & \textbf{Kết quả hiển thị} \\ \hline
+1 & Click chọn Chip Chi nhánh & Click bật/tắt & Thêm/xóa BranchId khỏi mảng & Chip đổi trạng thái màu sáng/tối tương ứng. \\ \hline
+2 & Nhấn "Lưu hồ sơ" & Bỏ chọn tất cả chi nhánh & Danh sách chi nhánh rỗng & Báo lỗi "Chọn ít nhất một chi nhánh làm việc". \\ \hline
+3 & Nhấn "Lưu hồ sơ" & Dữ liệu hợp lệ & Cập nhật Entity Trainer trong CSDL & Toast "Đã cập nhật hồ sơ chuyên môn", đồng bộ dữ liệu tra cứu PT. \\ \hline
+\end{tabularx}
+\caption{Bảng biến cố màn hình Hồ sơ Huấn luyện viên (MH05)}
+\end{table}
+
+% ==========================================
+% MH06: HỒ SƠ NHÂN VIÊN LỄ TÂN
+% ==========================================
+\subsection{MH06: Màn hình Hồ sơ Nhân viên Lễ tân (Staff Profile)}
+
+\subsubsection{Mục tiêu và đối tượng sử dụng}
+\begin{itemize}
+    \item \textbf{Mục tiêu:} Hiển thị hồ sơ công tác của nhân viên tiếp tân, chi nhánh trực thuộc được phân công và cung cấp chức năng đổi mật khẩu ca trực.
+    \item \textbf{Đối tượng sử dụng:} Nhân viên Lễ tân (Receptionist / Staff).
+    \item \textbf{Đường dẫn (URL):} \texttt{/staff/profile}
+\end{itemize}
+
+\subsubsection{Giao diện minh họa}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{img/mh06_profile_staff.png}
+    \caption{Giao diện màn hình Hồ sơ Nhân viên Lễ tân (MH06)}
+    \label{fig:mh06_profile_staff}
+\end{figure}
+
+\subsubsection{Bảng thành phần giao diện}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|l|X|}
+\hline
+\textbf{STT} & \textbf{Tên thành phần} & \textbf{Loại điều khiển} & \textbf{Ràng buộc dữ liệu} & \textbf{Ý nghĩa chức năng} \\ \hline
+1 & Thẻ nhân sự & Card Panel & Read-only & Hiển thị Avatar, chức vụ "Lễ tân", Chi nhánh công tác và mô tả nhiệm vụ ca trực. \\ \hline
+2 & Họ và tên & TextBox & Bắt buộc & Chỉnh sửa tên hiển thị trên hệ thống. \\ \hline
+3 & Email đăng nhập & TextBox & Read-only & Email được cấp nội bộ. \\ \hline
+4 & Số điện thoại & TextBox & Bắt buộc & Số điện thoại liên lạc nội bộ của nhân viên. \\ \hline
+5 & Chi nhánh công tác & TextBox & Read-only & Chi nhánh cụ thể mà nhân viên phụ trách ca trực. \\ \hline
+6 & Đổi mật khẩu ca trực & Form Inputs & Mật khẩu cũ/mới & Thay đổi mật khẩu định kỳ nhằm bảo mật quầy giao dịch. \\ \hline
+\end{tabularx}
+\caption{Bảng thành phần giao diện màn hình Hồ sơ Lễ tân (MH06)}
+\end{table}
+
+\subsubsection{Bảng biến cố và luồng thao tác}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|X|X|}
+\hline
+\textbf{STT} & \textbf{Biến cố (Action)} & \textbf{Điều kiện} & \textbf{Xử lý hệ thống (BCE)} & \textbf{Kết quả hiển thị} \\ \hline
+1 & Cập nhật thông tin & Họ tên, SĐT hợp lệ & Gọi \texttt{PUT /api/users/me} & Cập nhật thông tin nhân viên, hiển thị thông báo lưu thành công. \\ \hline
+2 & Đổi mật khẩu & Nhập sai mật khẩu cũ & Password verification failed & Thông báo lỗi "Mật khẩu hiện tại không đúng". \\ \hline
+3 & Đổi mật khẩu & Thành công & Mã hóa và lưu mật khẩu mới & Toast "Đổi mật khẩu thành công", ghi nhận log bảo mật. \\ \hline
+\end{tabularx}
+\caption{Bảng biến cố màn hình Hồ sơ Lễ tân (MH06)}
+\end{table}
+
+% ==========================================
+% MH07: HỒ SƠ QUẢN TRỊ VIÊN
+% ==========================================
+\subsection{MH07: Màn hình Hồ sơ Quản trị viên (Admin Profile)}
+
+\subsubsection{Mục tiêu và đối tượng sử dụng}
+\begin{itemize}
+    \item \textbf{Mục tiêu:} Hiển thị định danh Quản trị viên cấp cao (Super Admin), xác nhận thẩm quyền tối cao và quản trị bảo mật tài khoản root.
+    \item \textbf{Đối tượng sử dụng:} Người dùng có vai trò Quản trị viên (Admin).
+    \item \textbf{Đường dẫn (URL):} \texttt{/admin/profile}
+\end{itemize}
+
+\subsubsection{Giao diện minh họa}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{img/mh07_profile_admin.png}
+    \caption{Giao diện màn hình Hồ sơ Quản trị viên (MH07)}
+    \label{fig:mh07_profile_admin}
+\end{figure}
+
+\subsubsection{Bảng thành phần giao diện}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|l|X|}
+\hline
+\textbf{STT} & \textbf{Tên thành phần} & \textbf{Loại điều khiển} & \textbf{Ràng buộc dữ liệu} & \textbf{Ý nghĩa chức năng} \\ \hline
+1 & Thẻ Quản trị viên & Card Panel & Read-only & Badge "Quản trị viên", thông tin thẩm quyền toàn hệ thống. \\ \hline
+2 & Họ và tên & TextBox & Bắt buộc & Tên đầy đủ của quản trị viên. \\ \hline
+3 & Email đăng trị & TextBox & Read-only & Địa chỉ email sở hữu quyền Admin. \\ \hline
+4 & Vai trò hệ thống & TextBox & Read-only & Cố định giá trị: Quản trị viên (Admin). \\ \hline
+5 & Đổi mật khẩu bảo vệ & Form Inputs & Mật khẩu chuẩn an toàn & Đổi mật khẩu tài khoản quản trị hệ thống. \\ \hline
+\end{tabularx}
+\caption{Bảng thành phần giao diện màn hình Hồ sơ Admin (MH07)}
+\end{table}
+
+\subsubsection{Bảng biến cố và luồng thao tác}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|X|X|}
+\hline
+\textbf{STT} & \textbf{Biến cố (Action)} & \textbf{Điều kiện} & \textbf{Xử lý hệ thống (BCE)} & \textbf{Kết quả hiển thị} \\ \hline
+1 & Cập nhật tên/SĐT & Dữ liệu hợp lệ & Cập nhật User Admin qua API & Lưu thông tin thành công. \\ \hline
+2 & Đổi mật khẩu & Mật khẩu mới an toàn & AuthService đổi mật khẩu & Cập nhật thành công, duy trì phiên làm việc Admin. \\ \hline
+\end{tabularx}
+\caption{Bảng biến cố màn hình Hồ sơ Admin (MH07)}
+\end{table}
+
+% ==========================================
+% MH08: CẤU HÌNH HỆ THỐNG
+% ==========================================
+\subsection{MH08: Màn hình Cấu hình Tham số Hệ thống (Admin Settings)}
+
+\subsubsection{Mục tiêu và đối tượng sử dụng}
+\begin{itemize}
+    \item \textbf{Mục tiêu:} Cho phép Quản trị viên cấu hình động 5 tham số nghiệp vụ cốt lõi chi phối toàn bộ quy tắc vận hành của chuỗi phòng gym (thời gian gửi nhắc lịch, hạn chót hủy lịch, giờ chốt danh sách chờ, số ngày cảnh báo gia hạn và ngưỡng cảnh báo hết buổi PT).
+    \item \textbf{Đối tượng sử dụng:} Quản trị viên (Admin).
+    \item \textbf{Đường dẫn (URL):} \texttt{/admin/settings}
+\end{itemize}
+
+\subsubsection{Giao diện minh họa}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{img/mh08_admin_settings.png}
+    \caption{Giao diện màn hình Cấu hình Tham số Hệ thống (MH08)}
+    \label{fig:mh08_admin_settings}
+\end{figure}
+
+\subsubsection{Bảng thành phần giao diện}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|l|X|}
+\hline
+\textbf{STT} & \textbf{Tên thành phần} & \textbf{Loại điều khiển} & \textbf{Ràng buộc dữ liệu} & \textbf{Ý nghĩa chức năng} \\ \hline
+1 & Giờ gửi thông báo nhắc lịch & Number Input & Số nguyên $\ge 1$ giờ & Khoảng thời gian trước giờ bắt đầu lớp học để gửi push notification. \\ \hline
+2 & Hạn chót hủy đặt lịch & Number Input & Số nguyên $\ge 1$ giờ & Thời hạn tối thiểu trước giờ học để hội viên được hủy lịch mà không bị phạt. \\ \hline
+3 & Thời gian chốt danh sách chờ & Number Input & Số nguyên $\ge 1$ giờ & Thời điểm ngừng đôn học viên từ Waitlist vào danh sách lớp chính thức. \\ \hline
+4 & Số ngày cảnh báo hết hạn & Number Input & Số nguyên $\ge 1$ ngày & Gửi thông báo nhắc hội viên gia hạn trước khi gói tập hết hiệu lực. \\ \hline
+5 & Cảnh báo số buổi PT còn ít & Number Input & Số nguyên $\ge 1$ buổi & Cảnh báo khi số buổi tập 1-kèm-1 còn lại chạm ngưỡng thấp. \\ \hline
+6 & Nút "Lưu cấu hình" & Button (Primary) & Clickable & Gửi toàn bộ 5 tham số lên API backend để cập nhật CSDL. \\ \hline
+\end{tabularx}
+\caption{Bảng thành phần giao diện màn hình Cấu hình Tham số (MH08)}
+\end{table}
+
+\subsubsection{Bảng biến cố và luồng thao tác}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|c|l|l|X|X|}
+\hline
+\textbf{STT} & \textbf{Biến cố (Action)} & \textbf{Điều kiện} & \textbf{Xử lý hệ thống (BCE)} & \textbf{Kết quả hiển thị} \\ \hline
+1 & Tải trang (OnLoad) & Admin truy cập trang & Gọi \texttt{GET /api/settings/summary} & Tự động nạp giá trị 5 tham số từ bảng \texttt{SystemSettings} vào form. \\ \hline
+2 & Nhập giá trị âm & Số lượng $\le 0$ & Client ngăn chặn & Báo lỗi "Giá trị tham số phải lớn hơn 0". \\ \hline
+3 & Nhấn "Lưu cấu hình" & Dữ liệu hợp lệ & Gọi \texttt{PUT /api/settings/summary}, SystemSettingService lưu CSDL & Toast xanh: "Đã lưu cấu hình hệ thống thành công", các module nghiệp vụ cập nhật ngay lập tức. \\ \hline
+\end{tabularx}
+\caption{Bảng biến cố màn hình Cấu hình Tham số (MH08)}
+\end{table}
+
+\section{Tổng kết đánh giá thiết kế giao diện}
+Các màn hình giao diện được xây dựng tuân thủ chặt chẽ nguyên tắc kỹ nghệ phần mềm:
+\begin{enumerate}
+    \item Phân tầng rõ ràng theo kiến trúc Boundary - Control - Entity (BCE).
+    \item Đảm bảo trọn vẹn chu trình nghiệp vụ quản lý tài khoản, phân quyền 4 vai trò và cấu hình tham số hệ thống.
+    \item Xử lý ngoại lệ đầy đủ ở cả 2 đầu: Client-side validation (phản hồi tức thì) và Server-side business exception handling (bảo đảm an toàn dữ liệu).
+\end{enumerate}
+
+\end{document}
