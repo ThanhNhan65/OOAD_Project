@@ -7,6 +7,8 @@ import { reportLabel, eqLabel } from '../../../components/labels';
 import { fmtDate, fmtDateTime, todayStr, uid as genId } from '../../../utils';
 import type { ReportStatus, EquipmentStatus } from '../../../types';
 
+const ALL_EQ_STATUSES: EquipmentStatus[] = ['active', 'broken', 'repairing', 'retired'];
+
 export function StaffEquipmentScreen() {
   const { db, user, act } = useApp();
   const isAdmin = user!.role === 'admin';
@@ -15,9 +17,26 @@ export function StaffEquipmentScreen() {
   const [upd, setUpd] = useState<string | null>(null);
   const [add, setAdd] = useState(false);
   const [rec, setRec] = useState(false);
+  const [pendingStatus, setPendingStatus] = useState<{
+    id: string;
+    name: string;
+    code: string;
+    from: EquipmentStatus;
+    to: EquipmentStatus;
+  } | null>(null);
+
   const inBr = (b: string) => br === 'all' || b === br;
   const reports = db.equipmentReports.filter((r) => inBr(r.branchId));
   const eqs = db.equipment.filter((e) => inBr(e.branchId));
+
+  const confirmChangeStatus = () => {
+    if (!pendingStatus) return;
+    act((d) => {
+      const target = d.equipment.find((x) => x.id === pendingStatus.id);
+      if (target) target.status = pendingStatus.to;
+    }, `Đã chuyển "${pendingStatus.name}" sang trạng thái ${eqLabel[pendingStatus.to][0]}`);
+    setPendingStatus(null);
+  };
 
   return (
     <>
@@ -34,7 +53,7 @@ export function StaffEquipmentScreen() {
       {tab === 'summary' && (
         <>
           <div className="grid g4 mb16">
-            {(['active', 'broken', 'repairing', 'retired'] as EquipmentStatus[]).map((s) => <StatCard key={s} icon={<Wrench size={22} />} label={eqLabel[s][0]} value={eqs.filter((e) => e.status === s).length} color={{ active: '#2ed47a', broken: '#ff4d6d', repairing: '#ffb020', retired: '#6d7290' }[s]} />)}
+            {ALL_EQ_STATUSES.map((s) => <StatCard key={s} icon={<Wrench size={22} />} label={eqLabel[s][0]} value={eqs.filter((e) => e.status === s).length} color={{ active: '#2ed47a', broken: '#ff4d6d', repairing: '#ffb020', retired: '#6d7290' }[s]} />)}
           </div>
           <div className="table-wrap">
             <table>
@@ -57,14 +76,68 @@ export function StaffEquipmentScreen() {
       {tab === 'list' && (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Mã</th><th>Thiết bị</th><th>Loại</th><th>Chi nhánh</th><th>Ngày nhập</th><th>Tình trạng</th>{isAdmin && <th></th>}</tr></thead>
+            <thead><tr><th>Mã</th><th>Thiết bị</th><th>Loại</th><th>Chi nhánh</th><th>Ngày nhập</th><th>Tình trạng</th>{isAdmin && <th>Đổi trạng thái</th>}</tr></thead>
             <tbody>{eqs.map((e) => (
-              <tr key={e.id}><td className="small" style={{ fontFamily: 'monospace' }}>{e.code}</td><td><b>{e.name}</b></td><td className="small">{e.category}</td><td className="small">{L.branchById(db, e.branchId)?.name}</td><td className="small">{fmtDate(e.addedAt)}</td><td><Badge color={eqLabel[e.status][1]}>{eqLabel[e.status][0]}</Badge></td>
-                {isAdmin && <td>{e.status !== 'retired' && <button className="btn ghost sm" onClick={() => act((d) => { d.equipment.find((x) => x.id === e.id)!.status = 'retired'; }, 'Đã chuyển sang thanh lý')}>Thanh lý</button>}</td>}</tr>
+              <tr key={e.id}>
+                <td className="small" style={{ fontFamily: 'monospace' }}>{e.code}</td>
+                <td><b>{e.name}</b></td>
+                <td className="small">{e.category}</td>
+                <td className="small">{L.branchById(db, e.branchId)?.name}</td>
+                <td className="small">{fmtDate(e.addedAt)}</td>
+                <td><Badge color={eqLabel[e.status][1]}>{eqLabel[e.status][0]}</Badge></td>
+                {isAdmin && (
+                  <td>
+                    <select
+                      className="input"
+                      style={{ width: 150, padding: '6px 10px' }}
+                      value={e.status}
+                      onChange={(ev) => {
+                        const next = ev.target.value as EquipmentStatus;
+                        if (next !== e.status) {
+                          setPendingStatus({ id: e.id, name: e.name, code: e.code, from: e.status, to: next });
+                        }
+                      }}
+                    >
+                      {ALL_EQ_STATUSES.map((s) => (
+                        <option key={s} value={s}>{eqLabel[s][0]}</option>
+                      ))}
+                    </select>
+                  </td>
+                )}
+              </tr>
             ))}</tbody>
           </table>
         </div>
       )}
+
+      {pendingStatus && (
+        <Modal
+          title="Xác nhận đổi trạng thái thiết bị"
+          onClose={() => setPendingStatus(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setPendingStatus(null)}>Hủy</button>
+              <button
+                className={`btn ${pendingStatus.to === 'retired' ? 'danger' : 'primary'}`}
+                onClick={confirmChangeStatus}
+                id="confirm-change-eq-status"
+              >
+                Đồng ý đổi
+              </button>
+            </>
+          }
+        >
+          <p className="mb12">
+            Bạn có chắc chắn muốn đổi trạng thái thiết bị <b>{pendingStatus.name}</b> ({pendingStatus.code})?
+          </p>
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <Badge color={eqLabel[pendingStatus.from][1]}>{eqLabel[pendingStatus.from][0]}</Badge>
+            <span>→</span>
+            <Badge color={eqLabel[pendingStatus.to][1]}>{eqLabel[pendingStatus.to][0]}</Badge>
+          </div>
+        </Modal>
+      )}
+
       {upd && <UpdateReportModal id={upd} onClose={() => setUpd(null)} />}
       {add && <AddEquipmentModal onClose={() => setAdd(false)} />}
       {rec && <RecordBrokenModal onClose={() => setRec(false)} />}
