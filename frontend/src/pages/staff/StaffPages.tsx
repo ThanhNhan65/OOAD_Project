@@ -281,6 +281,8 @@ const getEqInfo = (status: string): [string, BadgeColor] =>
 const getReportInfo = (status: string): [string, BadgeColor] =>
   (reportLabel as Record<string, [string, BadgeColor]>)[status] ?? [status, 'gray'];
 
+const ALL_EQ_STATUSES: EquipmentStatus[] = ['active', 'broken', 'repairing', 'retired'];
+
 export function EquipmentManage() {
   const { db, user } = useApp();
   const isAdmin = user!.role === 'admin';
@@ -294,6 +296,14 @@ export function EquipmentManage() {
   const [upd, setUpd] = useState<EquipmentReport | null>(null);
   const [add, setAdd] = useState(false);
   const [rec, setRec] = useState(false);
+  const [pendingStatus, setPendingStatus] = useState<{
+    id: string;
+    name: string;
+    code?: string;
+    from: EquipmentStatus;
+    to: EquipmentStatus;
+  } | null>(null);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -318,20 +328,26 @@ export function EquipmentManage() {
     loadData();
   }, [loadData]);
 
-  const inBr = (b?: string) => br === 'all' || !b || b === br;
+  const validBr = br === 'all' || branches.some((b) => b.id === br) ? br : 'all';
+  const inBr = (b?: string) => validBr === 'all' || !b || b === validBr;
   const reports = allReports.filter((r) => inBr(r.branchId ?? allEqs.find((e) => e.id === r.equipmentId)?.branchId));
   const eqs = allEqs.filter((e) => inBr(e.branchId));
 
   const branchName = (id?: string) =>
     branches.find((b) => b.id === id)?.name ?? L.branchById(db, id ?? '')?.name ?? '—';
 
-  const handleRetire = async (id: string) => {
+  const confirmChangeStatus = async () => {
+    if (!pendingStatus) return;
+    setUpdatingStatus(true);
     setErr('');
     try {
-      await equipmentsApi.updateStatus(id, 'retired');
+      await equipmentsApi.updateStatus(pendingStatus.id, pendingStatus.to);
+      setPendingStatus(null);
       await loadData();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Cập nhật trạng thái thất bại');
+    } finally {
+      setUpdatingStatus(false);
     }
   };
 
@@ -371,7 +387,7 @@ export function EquipmentManage() {
           {tab === 'summary' && (
             <>
               <div className="grid g4 mb16">
-                {(['active', 'broken', 'repairing', 'retired'] as EquipmentStatus[]).map((s) => (
+                {ALL_EQ_STATUSES.map((s) => (
                   <StatCard
                     key={s}
                     icon={<Wrench size={22} />}
@@ -447,7 +463,7 @@ export function EquipmentManage() {
           {tab === 'list' && (
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Mã</th><th>Thiết bị</th><th>Loại</th><th>Chi nhánh</th><th>Ngày nhập</th><th>Tình trạng</th>{isAdmin && <th></th>}</tr></thead>
+                <thead><tr><th>Mã</th><th>Thiết bị</th><th>Loại</th><th>Chi nhánh</th><th>Ngày nhập</th><th>Tình trạng</th>{isAdmin && <th>Đổi trạng thái</th>}</tr></thead>
                 <tbody>
                   {eqs.map((e) => {
                     const [eqText, eqColor] = getEqInfo(e.status);
@@ -461,8 +477,30 @@ export function EquipmentManage() {
                         <td><Badge color={eqColor}>{eqText}</Badge></td>
                         {isAdmin && (
                           <td>
-                            {e.status !== 'retired' && (
-                              <button className="btn ghost sm" onClick={() => handleRetire(e.id)}>Thanh lý</button>
+                            {e.status === 'retired' ? (
+                              <span className="small dim">Đã khóa</span>
+                            ) : (
+                              <select
+                                className="input"
+                                style={{ width: 150, padding: '6px 10px' }}
+                                value={e.status}
+                                onChange={(ev) => {
+                                  const next = ev.target.value as EquipmentStatus;
+                                  if (next !== e.status) {
+                                    setPendingStatus({
+                                      id: e.id,
+                                      name: e.name,
+                                      code: e.code,
+                                      from: e.status,
+                                      to: next,
+                                    });
+                                  }
+                                }}
+                              >
+                                {ALL_EQ_STATUSES.map((s) => (
+                                  <option key={s} value={s}>{getEqInfo(s)[0]}</option>
+                                ))}
+                              </select>
                             )}
                           </td>
                         )}
@@ -476,9 +514,44 @@ export function EquipmentManage() {
         </>
       )}
 
+      {pendingStatus && (
+        <Modal
+          title="Xác nhận đổi trạng thái thiết bị"
+          onClose={() => !updatingStatus && setPendingStatus(null)}
+          footer={
+            <>
+              <button className="btn" disabled={updatingStatus} onClick={() => setPendingStatus(null)}>Hủy</button>
+              <button
+                className={`btn ${pendingStatus.to === 'retired' ? 'danger' : 'primary'}`}
+                disabled={updatingStatus}
+                onClick={confirmChangeStatus}
+                id="confirm-change-eq-status"
+              >
+                {updatingStatus ? 'Đang lưu...' : 'Đồng ý đổi'}
+              </button>
+            </>
+          }
+        >
+          <p className="mb12">
+            Bạn có chắc chắn muốn đổi trạng thái thiết bị <b>{pendingStatus.name}</b>
+            {pendingStatus.code ? ` (${pendingStatus.code})` : ''}?
+          </p>
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <Badge color={getEqInfo(pendingStatus.from)[1]}>{getEqInfo(pendingStatus.from)[0]}</Badge>
+            <span>→</span>
+            <Badge color={getEqInfo(pendingStatus.to)[1]}>{getEqInfo(pendingStatus.to)[0]}</Badge>
+          </div>
+          {pendingStatus.to === 'retired' && (
+            <p className="small mt12" style={{ color: 'var(--red)' }}>
+              ⚠️ Lưu ý: Sau khi chuyển sang <b>Thanh lý</b>, thiết bị sẽ bị khóa và không thể đổi lại trạng thái khác.
+            </p>
+          )}
+        </Modal>
+      )}
+
       {upd && <UpdateReportModal report={upd} onClose={() => setUpd(null)} onSaved={loadData} />}
       {add && <AddEquipmentModal branches={branches} existingCount={(bid) => allEqs.filter((e) => e.branchId === bid).length} onClose={() => setAdd(false)} onSaved={loadData} />}
-      {rec && <RecordBrokenModal equipments={allEqs.filter((e) => (!user?.branchId || e.branchId === user.branchId) && e.status === 'active')} onClose={() => setRec(false)} onSaved={loadData} />}
+      {rec && <RecordBrokenModal equipments={eqs.filter((e) => e.status === 'active')} onClose={() => setRec(false)} onSaved={loadData} />}
     </>
   );
 }

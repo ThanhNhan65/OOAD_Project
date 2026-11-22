@@ -12,3 +12,4 @@ export * from './trainer.service';
 export * from './ptApi';
 export * from './bodyMeasurementsApi';
 export * from './reviewsApi';
+export * from './settings.service';

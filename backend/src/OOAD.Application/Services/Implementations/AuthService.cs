@@ -401,6 +401,74 @@ public class AuthService : IAuthService
         return MapToUserDto(user);
     }
 
+    public async Task<UserDto> UpdateUserByAdminAsync(Guid targetUserId, UpdateUserAdminRequest request, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.FullName))
+            throw new ValidationException("Họ và tên không được để trống.");
+
+        var user = await _userRepository.GetByIdWithDetailsAsync(targetUserId, cancellationToken)
+            ?? throw new NotFoundException($"Không tìm thấy tài khoản với mã: {targetUserId}");
+
+        user.FullName = request.FullName.Trim();
+        user.Phone = request.Phone?.Trim();
+
+        if (!string.IsNullOrWhiteSpace(request.Role))
+        {
+            var roleNormalized = request.Role.Trim().ToUpperInvariant();
+            if (roleNormalized is "ADMIN" or "STAFF" or "RECEPTIONIST" or "TRAINER" or "MEMBER")
+            {
+                user.Role = roleNormalized switch
+                {
+                    "ADMIN" => UserRole.Admin,
+                    "STAFF" or "RECEPTIONIST" => UserRole.Staff,
+                    "TRAINER" => UserRole.Trainer,
+                    _ => UserRole.Member
+                };
+            }
+        }
+
+        if (user.Role == UserRole.Staff && user.Staff != null)
+        {
+            if (request.BranchId.HasValue && request.BranchId.Value != Guid.Empty)
+                user.Staff.BranchId = request.BranchId.Value;
+            if (!string.IsNullOrWhiteSpace(request.Position))
+                user.Staff.Position = request.Position.Trim();
+        }
+        else if (user.Role == UserRole.Trainer && user.Trainer != null)
+        {
+            if (request.BranchId.HasValue && request.BranchId.Value != Guid.Empty)
+                user.Trainer.BranchId = request.BranchId.Value;
+            if (request.Specialty != null)
+                user.Trainer.Specialty = request.Specialty.Trim();
+            if (request.ExperienceYears.HasValue)
+                user.Trainer.ExperienceYears = request.ExperienceYears.Value;
+            if (request.Bio != null)
+                user.Trainer.Bio = request.Bio.Trim();
+        }
+
+        _userRepository.Update(user);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        var updated = await _userRepository.GetByIdWithDetailsAsync(user.Id, cancellationToken) ?? user;
+        return MapToUserDto(updated);
+    }
+
+    public async Task<UserDto> ResetUserPasswordAsync(Guid targetUserId, ResetUserPasswordRequest request, CancellationToken cancellationToken = default)
+    {
+        var user = await _userRepository.GetByIdWithDetailsAsync(targetUserId, cancellationToken)
+            ?? throw new NotFoundException($"Không tìm thấy tài khoản với mã: {targetUserId}");
+
+        var newPassword = string.IsNullOrWhiteSpace(request.NewPassword) ? "123456" : request.NewPassword;
+        if (newPassword.Length < 6)
+            throw new ValidationException("Mật khẩu mới phải có ít nhất 6 ký tự.");
+
+        user.PasswordHash = _tokenService.HashPassword(newPassword);
+        _userRepository.Update(user);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return MapToUserDto(user);
+    }
+
     public async Task<IReadOnlyList<MemberDto>> SearchMembersAsync(string? search = null, CancellationToken cancellationToken = default)
     {
         var members = await _memberRepository.SearchMembersAsync(search, cancellationToken);

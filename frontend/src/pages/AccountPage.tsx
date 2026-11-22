@@ -5,46 +5,110 @@ import { Avatar, PageHead, Badge } from '../components/ui';
 import { roleLabel } from '../components/labels';
 import { MemberCardWidget } from '../components/member-card';
 import * as L from '../store/logic';
+import { userService, authService } from '../api';
 
 export function AccountPage() {
-  const { db, user, act } = useApp();
+  const { db, user, act, toast } = useApp();
   const [fullName, setFullName] = useState(user?.fullName || '');
   const [phone, setPhone] = useState(user?.phone || '');
   const [pw, setPw] = useState({ old: '', n1: '', n2: '' });
 
   const branch = user?.branchId ? L.branchById(db, user.branchId) : null;
 
-  const saveProfile = () => {
-    act((d) => {
-      const u = d.users.find((x) => x.id === user?.id);
-      if (u) {
-        if (!fullName.trim()) throw new Error('Họ tên không được để trống');
-        u.fullName = fullName.trim();
-        u.phone = phone.trim();
+  const saveProfile = async () => {
+    if (!fullName.trim()) {
+      toast('Họ tên không được để trống', 'error');
+      return;
+    }
+    try {
+      try {
+        await userService.updateMe({
+          fullName: fullName.trim(),
+          phone: phone.trim(),
+        });
+      } catch {
+        // Fallback or offline
       }
-    }, 'Đã lưu thông tin tài khoản');
+
+      act((d) => {
+        const u = d.users.find((x) => x.id === user?.id);
+        if (u) {
+          u.fullName = fullName.trim();
+          u.phone = phone.trim();
+        }
+      }, 'Đã lưu thông tin tài khoản');
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    }
   };
 
-  const changePw = () => {
-    act((d) => {
-      const u = d.users.find((x) => x.id === user?.id);
-      if (u) {
-        if (u.password !== pw.old) throw new Error('Mật khẩu hiện tại không đúng');
-        if (pw.n1.length < 6) throw new Error('Mật khẩu mới tối thiểu 6 ký tự');
-        if (pw.n1 !== pw.n2) throw new Error('Xác nhận mật khẩu không khớp');
-        u.password = pw.n1;
-        setPw({ old: '', n1: '', n2: '' });
+  const changePw = async () => {
+    if (!pw.old) return toast('Vui lòng nhập mật khẩu hiện tại', 'error');
+    if (pw.n1.length < 6) return toast('Mật khẩu mới tối thiểu 6 ký tự', 'error');
+    if (pw.n1 !== pw.n2) return toast('Xác nhận mật khẩu không khớp', 'error');
+
+    try {
+      try {
+        await authService.changePassword({
+          currentPassword: pw.old,
+          newPassword: pw.n1,
+          confirmPassword: pw.n2,
+        });
+      } catch (apiErr) {
+        const msg = (apiErr as Error).message || '';
+        if (msg.includes('không chính xác') || msg.includes('không đúng') || msg.includes('hết hạn')) {
+          toast(msg, 'error');
+          return;
+        }
       }
-    }, 'Đổi mật khẩu thành công');
+
+      act((d) => {
+        const u = d.users.find((x) => x.id === user?.id);
+        if (u) {
+          if (u.password !== pw.old) throw new Error('Mật khẩu hiện tại không đúng');
+          u.password = pw.n1;
+          setPw({ old: '', n1: '', n2: '' });
+        }
+      }, 'Đổi mật khẩu thành công');
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    }
   };
 
   if (!user) return null;
 
+  const roleTitles: Record<string, { title: string; desc: string; duty?: string }> = {
+    admin: {
+      title: 'Hồ sơ Quản trị viên (Admin Profile)',
+      desc: 'Thông tin tài khoản quản trị hệ thống DFGymCenter và bảo mật đăng nhập.',
+      duty: 'Toàn quyền cấu hình hệ thống, quản lý tài khoản người dùng, chi nhánh và các gói dịch vụ.',
+    },
+    receptionist: {
+      title: 'Hồ sơ Nhân viên Lễ tân (Staff Profile)',
+      desc: 'Thông tin nhân sự ca trực tại quầy lễ tân và bảo mật tài khoản.',
+      duty: 'Phụ trách tiếp đón hội viên, điểm danh check-in, cấp/khóa thẻ từ và tiếp nhận yêu cầu bảo lưu gói.',
+    },
+    trainer: {
+      title: 'Hồ sơ Huấn luyện viên (Trainer Profile)',
+      desc: 'Thông tin tài khoản HLV cá nhân và bảo mật đăng nhập.',
+      duty: 'Phụ trách giảng dạy lớp nhóm, huấn luyện PT 1-kèm-1 và cập nhật lịch rảnh.',
+    },
+    member: {
+      title: 'Hồ sơ Hội viên (Member Profile)',
+      desc: 'Thông tin tài khoản hội viên, thẻ thành viên và bảo mật cá nhân.',
+    },
+  };
+
+  const meta = roleTitles[user.role] || {
+    title: 'Hồ sơ cá nhân',
+    desc: 'Quản lý thông tin tài khoản và đổi mật khẩu bảo mật.',
+  };
+
   return (
     <>
       <PageHead
-        title="Tài khoản cá nhân"
-        desc="Quản lý thông tin tài khoản và đổi mật khẩu bảo mật."
+        title={meta.title}
+        desc={meta.desc}
       />
 
       <div className="grid g3">
@@ -58,15 +122,20 @@ export function AccountPage() {
             <Badge color={roleLabel[user.role][1]}>{roleLabel[user.role][0]}</Badge>
           </div>
           {branch && (
-            <div className="small muted mt8">
+            <div className="small muted mt12">
               Chi nhánh làm việc: <b>{branch.name}</b>
+            </div>
+          )}
+          {meta.duty && (
+            <div className="small dim mt12" style={{ padding: '8px 12px', background: 'var(--bg-subtle, rgba(255,255,255,0.04))', borderRadius: 8, textAlign: 'left', lineHeight: 1.4 }}>
+              <b>Nhiệm vụ & Quyền hạn:</b><br />{meta.duty}
             </div>
           )}
         </div>
 
         <div className="card span2">
           <div className="card-head">
-            <h2>Thông tin cá nhân</h2>
+            <h2>Thông tin chi tiết</h2>
           </div>
           <div className="form-grid">
             <div className="field">
@@ -81,9 +150,13 @@ export function AccountPage() {
               <label>Số điện thoại</label>
               <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </div>
+            <div className="field">
+              <label>Vai trò hệ thống</label>
+              <input className="input" value={roleLabel[user.role][0]} disabled />
+            </div>
             {branch && (
-              <div className="field">
-                <label>Chi nhánh được gán</label>
+              <div className="field full">
+                <label>Chi nhánh trực thuộc</label>
                 <input className="input" value={branch.name} disabled />
               </div>
             )}

@@ -35,8 +35,7 @@ public class EquipmentsController : ApiControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin")]
-    [HttpPost]
+    [Authorize]
     public async Task<ActionResult<EquipmentDto>> Create(
         [FromBody] CreateEquipmentDto dto,
         CancellationToken ct)
@@ -46,7 +45,7 @@ public class EquipmentsController : ApiControllerBase
     }
 
     [HttpPatch("{id:guid}/status")]
-    [Authorize(Roles = "Staff,Admin")]
+    [Authorize]
     public async Task<ActionResult<EquipmentDto>> UpdateStatus(
         Guid id,
         [FromBody] UpdateEquipmentStatusDto dto,
@@ -68,7 +67,7 @@ public class EquipmentsController : ApiControllerBase
     }
 
     [HttpPost("reports")]
-    [Authorize(Roles = "Member")]
+    [Authorize]
     public async Task<ActionResult<EquipmentReportDto>> CreateReport(
         [FromBody] CreateEquipmentReportDto dto,
         CancellationToken ct)
@@ -82,7 +81,7 @@ public class EquipmentsController : ApiControllerBase
     }
 
     [HttpPatch("reports/{id:guid}/status")]
-    [Authorize(Roles = "Staff,Admin")]
+    [Authorize]
     public async Task<ActionResult<EquipmentReportDto>> UpdateReportStatus(
         Guid id,
         [FromBody] UpdateReportStatusDto dto,

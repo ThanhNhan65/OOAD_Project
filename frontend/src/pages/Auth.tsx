@@ -4,8 +4,7 @@ import { Mail, Lock, User as UserIcon, Phone, Zap, ArrowRight, ScanLine, Dumbbel
 import { useApp } from '../store/AppContext';
 import * as L from '../store/logic';
 import { homeOf } from '../components/Layout';
-import { Avatar, Badge } from '../components/ui';
-import { roleLabel } from '../components/labels';
+import { Badge } from '../components/ui';
 import { authService, type ApiUserDto } from '../api/auth.service';
 import { branchesApi } from '../api/branchesApi';
 import { isApiNetworkError } from '../api/apiClient';
@@ -41,13 +40,6 @@ function Hero() {
   );
 }
 
-const DEMO = [
-  ['hoivien@ooad.vn', 'm1'],
-  ['pt@ooad.vn', 'tr1'],
-  ['letan@ooad.vn', 'rc1'], 
-  ['admin@ooad.vn', 'admin'],
-];
-
 function mapApiUserToLocalUser(apiUser: ApiUserDto, existing?: User): User {
   return {
     id: existing?.id ?? apiUser.id,
@@ -68,7 +60,7 @@ function mapApiUserToLocalUser(apiUser: ApiUserDto, existing?: User): User {
     trainer: existing?.trainer ?? (apiUser.role === 'trainer' ? {
       specialties: (apiUser.specialty || 'Gym, Fitness').split(',').map((s) => s.trim()).filter(Boolean),
       experienceYears: apiUser.experienceYears ?? 0,
-      certifications: ['HLV OOAD'],
+      certifications: ['HLV DFGymCenter'],
       bio: apiUser.bio ?? '',
       branchIds: apiUser.branchId ? [apiUser.branchId] : [],
     } : undefined),
@@ -120,7 +112,7 @@ export function Login() {
           <p className="muted mt8">Chào mừng trở lại! Đăng nhập để tiếp tục hành trình tập luyện.</p>
           <form className="col mt24" style={{ gap: 14 }} onSubmit={submit}>
             <div className="field">
-              <label>Email</label>
+              <label>Email tài khoản</label>
               <div className="input-icon"><Mail size={17} /><input id="login-email" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ban@email.com" required /></div>
             </div>
             <div className="field">
@@ -130,27 +122,10 @@ export function Login() {
             <button className="btn primary lg block mt8" id="login-submit">Đăng nhập <ArrowRight size={18} /></button>
           </form>
           <p className="muted mt16" style={{ textAlign: 'center' }}>
-            Chưa có tài khoản? <Link to="/register" className="grad-text bold" id="go-register">Đăng ký hội viên</Link>
+            Chưa có tài khoản? <Link to="/register" className="grad-text bold" id="go-register">Đăng ký tài khoản mới</Link>
           </p>
           <div className="divider" />
-          <div className="small muted bold mb16">Tài khoản demo (mật khẩu: 123456)</div>
-          <div className="col" style={{ gap: 8 }}>
-            {DEMO.map(([em, id]) => {
-              const u = db.users.find((x) => x.id === id);
-              if (!u) return null;
-              return (
-                <button key={id} className="demo-acc" id={`demo-${u.role}`} onClick={() => submit(undefined, em, '123456')}>
-                  <Avatar user={u} size="sm" />
-                  <div className="grow">
-                    <div className="bold" style={{ fontSize: 13 }}>{u.fullName}</div>
-                    <div className="small dim">{em}</div>
-                  </div>
-                  <Badge color={roleLabel[u.role][1]}>{roleLabel[u.role][0]}</Badge>
-                </button>
-              );
-            })}
-          </div>
-          <Link to="/kiosk" className="btn block mt16" id="go-kiosk"><ScanLine size={17} /> Mở máy quét check-in (Kiosk)</Link>
+          <Link to="/kiosk" className="btn ghost block" id="go-kiosk"><ScanLine size={17} /> Mở máy quét check-in (Kiosk)</Link>
         </div>
       </div>
     </div>
@@ -236,11 +211,15 @@ export function Register() {
       <Hero />
       <div className="auth-form">
         <form className="auth-box" onSubmit={submit}>
-          <h1>Tạo tài khoản mới</h1>
-          <p className="muted mt8">Đăng ký tài khoản Hội viên hoặc Huấn luyện viên (PT).</p>
+          <h1>{f.role === 'trainer' ? 'Đăng ký Huấn luyện viên (PT)' : 'Tạo tài khoản Hội viên mới'}</h1>
+          <p className="muted mt8">
+            {f.role === 'trainer'
+              ? 'Gia nhập đội ngũ Huấn luyện viên chuyên môn cao tại chuỗi phòng gym DFGymCenter.'
+              : 'Đăng ký tài khoản để bắt đầu trải nghiệm tập luyện và các tiện ích tại phòng gym.'}
+          </p>
           <div className="form-grid mt24">
             <div className="field full">
-              <label>Vai trò đăng ký</label>
+              <label>Loại tài khoản đăng ký</label>
               <div className="chips">
                 <button
                   type="button"
@@ -263,7 +242,7 @@ export function Register() {
             {f.role === 'trainer' && (
               <>
                 <div className="field full">
-                  <label>Chi nhánh làm việc (Bắt buộc) *</label>
+                  <label>Chi nhánh làm việc chính (Bắt buộc) *</label>
                   <select className="input" value={f.branchId} onChange={set('branchId')} required id="reg-branch">
                     {branchOptions.map((b) => (
                       <option key={b.id} value={b.id}>{b.name}</option>
@@ -271,8 +250,8 @@ export function Register() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Chuyên môn</label>
-                  <input className="input" value={f.specialty} onChange={set('specialty')} placeholder="Gym, Yoga, HIIT..." />
+                  <label>Chuyên môn đào tạo</label>
+                  <input className="input" value={f.specialty} onChange={set('specialty')} placeholder="Gym, Yoga, HIIT, Boxing..." />
                 </div>
                 <div className="field">
                   <label>Số năm kinh nghiệm</label>
@@ -281,14 +260,16 @@ export function Register() {
               </>
             )}
             <div className="field full"><label>Họ và tên</label><div className="input-icon"><UserIcon size={17} /><input id="reg-name" className="input" value={f.fullName} onChange={set('fullName')} required placeholder="Nguyễn Văn A" /></div></div>
-            <div className="field"><label>Email</label><div className="input-icon"><Mail size={17} /><input id="reg-email" type="email" className="input" value={f.email} onChange={set('email')} required /></div></div>
-            <div className="field"><label>Số điện thoại</label><div className="input-icon"><Phone size={17} /><input id="reg-phone" className="input" value={f.phone} onChange={set('phone')} required pattern="0[0-9]{9}" title="10 chữ số, bắt đầu bằng 0" /></div></div>
+            <div className="field"><label>Email đăng nhập</label><div className="input-icon"><Mail size={17} /><input id="reg-email" type="email" className="input" value={f.email} onChange={set('email')} required placeholder="example@email.com" /></div></div>
+            <div className="field"><label>Số điện thoại</label><div className="input-icon"><Phone size={17} /><input id="reg-phone" className="input" value={f.phone} onChange={set('phone')} required pattern="0[0-9]{9}" title="10 chữ số, bắt đầu bằng 0" placeholder="0901234567" /></div></div>
             <div className="field"><label>Giới tính</label><select className="input" value={f.gender} onChange={set('gender')}><option value="male">Nam</option><option value="female">Nữ</option><option value="other">Khác</option></select></div>
             <div className="field"><label>Ngày sinh</label><input type="date" className="input" value={f.dob} onChange={set('dob')} /></div>
-            <div className="field"><label>Mật khẩu</label><input id="reg-password" type="password" className="input" value={f.password} onChange={set('password')} required minLength={6} /></div>
-            <div className="field"><label>Xác nhận mật khẩu</label><input id="reg-confirm" type="password" className="input" value={f.confirm} onChange={set('confirm')} required /></div>
+            <div className="field"><label>Mật khẩu</label><input id="reg-password" type="password" className="input" value={f.password} onChange={set('password')} required minLength={6} placeholder="Tối thiểu 6 ký tự" /></div>
+            <div className="field"><label>Xác nhận mật khẩu</label><input id="reg-confirm" type="password" className="input" value={f.confirm} onChange={set('confirm')} required placeholder="Nhập lại mật khẩu" /></div>
           </div>
-          <button className="btn primary lg block mt24" id="reg-submit">Đăng ký <ArrowRight size={18} /></button>
+          <button className="btn primary lg block mt24" id="reg-submit">
+            {f.role === 'trainer' ? 'Đăng ký Huấn luyện viên' : 'Đăng ký Hội viên'} <ArrowRight size={18} />
+          </button>
           <p className="muted mt16" style={{ textAlign: 'center' }}>Đã có tài khoản? <Link to="/login" className="grad-text bold">Đăng nhập</Link></p>
         </form>
       </div>

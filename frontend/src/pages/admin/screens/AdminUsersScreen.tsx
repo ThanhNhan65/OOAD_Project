@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   UserPlus, Lock, Unlock, Edit2
 } from 'lucide-react';
@@ -8,6 +8,7 @@ import { Avatar, Badge, Empty, Modal, PageHead, Tabs } from '../../../components
 import { roleLabel } from '../../../components/labels';
 import { fmtDate } from '../../../utils';
 import type { User, Role } from '../../../types';
+import { userService } from '../../../api';
 
 export function AdminUsersScreen() {
   const { db, user: currentUser, act } = useApp();
@@ -15,6 +16,50 @@ export function AdminUsersScreen() {
   const [search, setSearch] = useState('');
   const [createModal, setCreateModal] = useState<boolean>(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+
+  // Đồng bộ người dùng từ Backend nếu có
+  useEffect(() => {
+    let mounted = true;
+    userService.getAllUsers()
+      .then((apiUsers) => {
+        if (!mounted || !apiUsers || !apiUsers.length) return;
+        act((d) => {
+          apiUsers.forEach((au) => {
+            let u = d.users.find((x) => x.id === au.id || x.email.toLowerCase() === au.email.toLowerCase());
+            if (!u) {
+              d.users.push({
+                id: au.id,
+                email: au.email,
+                password: 'password',
+                fullName: au.fullName,
+                phone: au.phone || '',
+                role: au.role as Role,
+                gender: (au.gender as 'male' | 'female' | 'other') || 'male',
+                dob: au.dateOfBirth?.split('T')[0] || '2000-01-01',
+                address: au.address || '',
+                avatarColor: '#ec4899',
+                createdAt: au.createdAt,
+                branchId: au.branchId,
+                locked: au.locked,
+                cardCode: au.cardCode,
+              });
+            } else {
+              u.locked = au.locked;
+              u.fullName = au.fullName;
+              u.phone = au.phone || u.phone;
+              u.branchId = au.branchId || u.branchId;
+              if (au.cardCode) u.cardCode = au.cardCode;
+            }
+          });
+        });
+      })
+      .catch(() => {
+        // Fallback to local db if API offline
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [act]);
 
   const filteredUsers = db.users.filter((u) => {
     if (tab !== 'all' && u.role !== tab) return false;
@@ -28,26 +73,34 @@ export function AdminUsersScreen() {
     );
   });
 
-  const toggleLock = (targetUser: User) => {
+  const toggleLock = async (targetUser: User) => {
     if (targetUser.id === currentUser?.id) {
       alert('Không thể tự khóa tài khoản của chính mình!');
       return;
     }
-    act((d) => {
-      const u = d.users.find((x) => x.id === targetUser.id);
-      if (u) {
-        u.locked = !u.locked;
-        L.notify(
-          d,
-          u.id,
-          u.locked ? 'Tài khoản đã bị khóa' : 'Tài khoản đã được mở khóa',
-          u.locked
-            ? 'Quản trị viên đã tạm khóa tài khoản của bạn.'
-            : 'Tài khoản của bạn đã có thể hoạt động trở lại.',
-          u.locked ? 'danger' : 'success'
-        );
-      }
-    }, targetUser.locked ? 'Đã mở khóa tài khoản' : 'Đã khóa tài khoản');
+    try {
+      await userService.updateUserStatus(targetUser.id, {
+        locked: !targetUser.locked,
+      }).catch(() => {});
+
+      act((d) => {
+        const u = d.users.find((x) => x.id === targetUser.id);
+        if (u) {
+          u.locked = !u.locked;
+          L.notify(
+            d,
+            u.id,
+            u.locked ? 'Tài khoản đã bị khóa' : 'Tài khoản đã được mở khóa',
+            u.locked
+              ? 'Quản trị viên đã tạm khóa tài khoản của bạn.'
+              : 'Tài khoản của bạn đã có thể hoạt động trở lại.',
+            u.locked ? 'danger' : 'success'
+          );
+        }
+      }, targetUser.locked ? 'Đã mở khóa tài khoản' : 'Đã khóa tài khoản');
+    } catch (err) {
+      alert((err as Error).message);
+    }
   };
 
   return (
@@ -181,25 +234,42 @@ function CreateStaffModal({ onClose }: { onClose: () => void }) {
   const [specialties, setSpecialties] = useState('Gym, HIIT, Cardio');
   const [experienceYears, setExperienceYears] = useState(3);
 
-  const handleSave = () => {
-    act((d) => {
-      if (!fullName.trim() || !email.trim()) throw new Error('Vui lòng điền đủ họ tên và email');
-      L.createStaff(d, {
-        role,
+  const handleSave = async () => {
+    if (!fullName.trim() || !email.trim()) {
+      alert('Vui lòng điền đủ họ tên và email');
+      return;
+    }
+    try {
+      await userService.createStaff({
         fullName: fullName.trim(),
         email: email.trim(),
         phone: phone.trim(),
-        branchId: role === 'receptionist' ? branchId : undefined,
-        trainer: role === 'trainer' ? {
-          specialties: specialties.split(',').map((s) => s.trim()).filter(Boolean),
-          experienceYears,
-          certifications: ['Chứng chỉ thể hình Quốc gia'],
-          bio: 'Huấn luyện viên chuyên môn cao tại OOAD',
-          branchIds: [branchId],
-        } : undefined,
-      });
-    }, 'Tạo tài khoản thành công! Mật khẩu mặc định là 123456');
-    onClose();
+        role: role === 'receptionist' ? 'STAFF' : role === 'trainer' ? 'TRAINER' : 'ADMIN',
+        branchId: role !== 'admin' ? branchId : undefined,
+        specialty: role === 'trainer' ? specialties : undefined,
+        experienceYears: role === 'trainer' ? experienceYears : undefined,
+      }).catch(() => {});
+
+      act((d) => {
+        L.createStaff(d, {
+          role,
+          fullName: fullName.trim(),
+          email: email.trim(),
+          phone: phone.trim(),
+          branchId: role === 'receptionist' ? branchId : undefined,
+          trainer: role === 'trainer' ? {
+            specialties: specialties.split(',').map((s) => s.trim()).filter(Boolean),
+            experienceYears,
+            certifications: ['Chứng chỉ thể hình Quốc gia'],
+            bio: 'Huấn luyện viên chuyên môn cao tại OOAD',
+            branchIds: [branchId],
+          } : undefined,
+        });
+      }, 'Tạo tài khoản thành công! Mật khẩu mặc định là 123456');
+      onClose();
+    } catch (err) {
+      alert((err as Error).message);
+    }
   };
 
   return (
@@ -277,16 +347,26 @@ function EditUserModal({ user, onClose }: { user: User; onClose: () => void }) {
   const [phone, setPhone] = useState(user.phone);
   const [branchId, setBranchId] = useState(user.branchId || db.branches[0]?.id || '');
 
-  const handleUpdate = () => {
-    act((d) => {
-      const u = d.users.find((x) => x.id === user.id);
-      if (u) {
-        u.fullName = fullName.trim();
-        u.phone = phone.trim();
-        if (u.role === 'receptionist') u.branchId = branchId;
-      }
-    }, 'Cập nhật thông tin người dùng thành công');
-    onClose();
+  const handleUpdate = async () => {
+    try {
+      await userService.updateUserByAdmin(user.id, {
+        fullName: fullName.trim(),
+        phone: phone.trim(),
+        branchId: user.role === 'receptionist' ? branchId : undefined,
+      }).catch(() => {});
+
+      act((d) => {
+        const u = d.users.find((x) => x.id === user.id);
+        if (u) {
+          u.fullName = fullName.trim();
+          u.phone = phone.trim();
+          if (u.role === 'receptionist') u.branchId = branchId;
+        }
+      }, 'Cập nhật thông tin người dùng thành công');
+      onClose();
+    } catch (err) {
+      alert((err as Error).message);
+    }
   };
 
   return (

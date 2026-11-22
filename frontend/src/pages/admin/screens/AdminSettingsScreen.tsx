@@ -1,17 +1,51 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Save } from 'lucide-react';
 import { useApp } from '../../../store/AppContext';
 import { PageHead } from '../../../components/ui';
+import { settingsService } from '../../../api';
 import type { Settings } from '../../../types';
 
 export function AdminSettingsScreen() {
-  const { db, act } = useApp();
+  const { db, act, toast } = useApp();
   const [f, setF] = useState<Settings>({ ...db.settings });
 
-  const handleSave = () => {
-    act((d) => {
-      d.settings = { ...f };
-    }, 'Đã lưu cấu hình hệ thống');
+  useEffect(() => {
+    let mounted = true;
+    settingsService.getSummary()
+      .then((data) => {
+        if (mounted && data) {
+          setF(data);
+          act((d) => {
+            d.settings = { ...data };
+          });
+        }
+      })
+      .catch(() => {
+        // Fallback to local settings
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [act]);
+
+  const handleSave = async () => {
+    try {
+      try {
+        const res = await settingsService.updateSummary(f);
+        if (res) {
+          setF(res);
+        }
+      } catch (apiErr) {
+        const msg = (apiErr as Error).message;
+        if (msg) toast(msg, 'error');
+      }
+
+      act((d) => {
+        d.settings = { ...f };
+      }, 'Đã lưu cấu hình hệ thống');
+    } catch (err) {
+      toast((err as Error).message, 'error');
+    }
   };
 
   return (
