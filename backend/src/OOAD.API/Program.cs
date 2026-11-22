@@ -2,13 +2,17 @@ using OOAD.API.Extensions;
 using OOAD.API.Middlewares;
 using OOAD.API.Services;
 using OOAD.Application;
+using OOAD.Application.Common.Options;
 using OOAD.Infrastructure;
 using Microsoft.AspNetCore.Authentication;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Đăng ký các tầng kiến trúc Clean Architecture vào IoC Container
+// 1. Đăng ký cấu hình quy tắc nghiệp vụ & các tầng Clean Architecture vào IoC Container
+var businessRules = new BusinessRuleOptions();
+builder.Configuration.GetSection(BusinessRuleOptions.SectionName).Bind(businessRules);
+builder.Services.AddSingleton(businessRules);
 builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices(builder.Configuration);
 

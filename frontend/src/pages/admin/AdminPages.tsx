@@ -1,346 +1,29 @@
 import { useState, useEffect, useCallback } from 'react';
 import { branchesApi, type BranchApiDto } from '../../api/branchesApi';
 import { equipmentsApi } from '../../api/equipmentsApi';
+import { membershipPlansApi, type ApiMembershipPlanDto } from '../../api/membershipPlansApi';
+import { userService } from '../../api/user.service';
+import { classesApi } from '../../api/classesApi';
+import { getAuthToken, isApiNetworkError } from '../../api/apiClient';
 import {
-  UserPlus, Lock, Unlock, Building2, Package, CalendarDays, Plus,
-  Edit2, Calendar, Clock, Save, MapPin, Sparkles
+  Building2, Package, CalendarDays, Plus,
+  Edit2, Calendar, Clock, MapPin, Sparkles, RefreshCw, Trash2
 } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
 import * as L from '../../store/logic';
-import { Avatar, Badge, Empty, Modal, PageHead, Tabs } from '../../components/ui';
-import { roleLabel } from '../../components/labels';
-import { fmtDate, fmtMoney, uid } from '../../utils';
-import type { User, Role, Branch, MembershipPlan, PTPlan, Settings } from '../../types';
+import { Badge, Empty, Modal, PageHead, Tabs, ConfirmModal } from '../../components/ui';
+import { fmtMoney, uid } from '../../utils';
+import type { MembershipPlan, PTPlan } from '../../types';
 
-/* ========================================================================== */
-/*  1. Quản lý Tài khoản & Phân quyền (AdminUsers)                            */
-/* ========================================================================== */
-export function AdminUsers() {
-  const { db, user: currentUser, act } = useApp();
-  const [tab, setTab] = useState<Role | 'all'>('all');
-  const [search, setSearch] = useState('');
-  const [createModal, setCreateModal] = useState<boolean>(false);
-  const [editingUser, setEditingUser] = useState<User | null>(null);
-
-  const filteredUsers = db.users.filter((u) => {
-    if (tab !== 'all' && u.role !== tab) return false;
-    if (!search) return true;
-    const term = search.toLowerCase();
-    return (
-      u.fullName.toLowerCase().includes(term) ||
-      u.email.toLowerCase().includes(term) ||
-      u.phone.includes(term) ||
-      (u.cardCode && u.cardCode.toLowerCase().includes(term))
-    );
-  });
-
-  const toggleLock = (targetUser: User) => {
-    if (targetUser.id === currentUser?.id) {
-      alert('Không thể tự khóa tài khoản của chính mình!');
-      return;
-    }
-    act((d) => {
-      const u = d.users.find((x) => x.id === targetUser.id);
-      if (u) {
-        u.locked = !u.locked;
-        L.notify(
-          d,
-          u.id,
-          u.locked ? 'Tài khoản đã bị khóa' : 'Tài khoản đã được mở khóa',
-          u.locked
-            ? 'Quản trị viên đã tạm khóa tài khoản của bạn.'
-            : 'Tài khoản của bạn đã có thể hoạt động trở lại.',
-          u.locked ? 'danger' : 'success'
-        );
-      }
-    }, targetUser.locked ? 'Đã mở khóa tài khoản' : 'Đã khóa tài khoản');
-  };
-
-  return (
-    <>
-      <PageHead
-        title="Quản lý Tài khoản & Phân quyền"
-        desc="Quản trị người dùng toàn hệ thống, tạo tài khoản nhân viên/HLV và phân quyền chi nhánh."
-        actions={
-          <button className="btn primary" onClick={() => setCreateModal(true)} id="btn-add-staff">
-            <UserPlus size={16} /> Thêm nhân viên / HLV
-          </button>
-        }
-      />
-
-      <div className="row wrap mb16" style={{ justifyContent: 'space-between', gap: 12 }}>
-        <Tabs
-          value={tab}
-          onChange={setTab}
-          tabs={[
-            { id: 'all', label: 'Tất cả', count: db.users.length },
-            { id: 'member', label: 'Hội viên', count: db.users.filter((u) => u.role === 'member').length },
-            { id: 'trainer', label: 'Huấn luyện viên', count: db.users.filter((u) => u.role === 'trainer').length },
-            { id: 'receptionist', label: 'Lễ tân', count: db.users.filter((u) => u.role === 'receptionist').length },
-            { id: 'admin', label: 'Quản trị viên', count: db.users.filter((u) => u.role === 'admin').length },
-          ]}
-        />
-        <div className="input-icon" style={{ minWidth: 260 }}>
-          <input
-            className="input"
-            placeholder="Tìm theo tên, email, SĐT, mã thẻ..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            id="search-users"
-          />
-        </div>
-      </div>
-
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Người dùng</th>
-              <th>Vai trò</th>
-              <th>Chi nhánh / Mã thẻ</th>
-              <th>Số điện thoại</th>
-              <th>Ngày tạo</th>
-              <th>Trạng thái</th>
-              <th style={{ textAlign: 'right' }}>Thao tác</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredUsers.map((u) => {
-              const [roleText, roleColor] = roleLabel[u.role];
-              const branch = u.branchId ? L.branchById(db, u.branchId) : null;
-              return (
-                <tr key={u.id}>
-                  <td>
-                    <div className="row">
-                      <Avatar user={u} size="sm" />
-                      <div>
-                        <b>{u.fullName}</b>
-                        <div className="small dim">{u.email}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td>
-                    <Badge color={roleColor}>{roleText}</Badge>
-                  </td>
-                  <td className="small">
-                    {u.role === 'member' ? (
-                      <span style={{ fontFamily: 'monospace' }}>{u.cardCode || '—'}</span>
-                    ) : u.role === 'receptionist' ? (
-                      branch ? branch.name : 'Chưa gán'
-                    ) : u.role === 'trainer' ? (
-                      u.trainer?.branchIds?.map((b) => L.branchById(db, b)?.name.replace('OOAD ', '')).join(', ') || 'Chưa gán'
-                    ) : (
-                      'Toàn hệ thống'
-                    )}
-                  </td>
-                  <td className="small">{u.phone || '—'}</td>
-                  <td className="small">{fmtDate(u.createdAt)}</td>
-                  <td>
-                    {u.locked ? (
-                      <Badge color="red">Bị khóa</Badge>
-                    ) : (
-                      <Badge color="green">Hoạt động</Badge>
-                    )}
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <div className="row" style={{ justifyContent: 'flex-end', gap: 6 }}>
-                      <button
-                        className="btn sm ghost"
-                        onClick={() => setEditingUser(u)}
-                        title="Chỉnh sửa thông tin"
-                        id={`edit-user-${u.id}`}
-                      >
-                        <Edit2 size={14} />
-                      </button>
-                      {u.id !== currentUser?.id && (
-                        <button
-                          className={`btn sm ${u.locked ? 'success' : 'danger'}`}
-                          onClick={() => toggleLock(u)}
-                          id={`lock-user-${u.id}`}
-                        >
-                          {u.locked ? <><Unlock size={14} /> Mở khóa</> : <><Lock size={14} /> Khóa</>}
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {filteredUsers.length === 0 && <Empty text="Không tìm thấy người dùng phù hợp" />}
-      </div>
-
-      {createModal && <CreateStaffModal onClose={() => setCreateModal(false)} />}
-      {editingUser && <EditUserModal user={editingUser} onClose={() => setEditingUser(null)} />}
-    </>
-  );
-}
-
-function CreateStaffModal({ onClose }: { onClose: () => void }) {
-  const { db, act } = useApp();
-  const [role, setRole] = useState<'receptionist' | 'trainer' | 'admin'>('receptionist');
-  const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [branchId, setBranchId] = useState(db.branches[0]?.id || '');
-  const [specialties, setSpecialties] = useState('Gym, HIIT, Cardio');
-  const [experienceYears, setExperienceYears] = useState(3);
-
-  const handleSave = () => {
-    act((d) => {
-      if (!fullName.trim() || !email.trim()) throw new Error('Vui lòng điền đủ họ tên và email');
-      L.createStaff(d, {
-        role,
-        fullName: fullName.trim(),
-        email: email.trim(),
-        phone: phone.trim(),
-        branchId: role === 'receptionist' ? branchId : undefined,
-        trainer: role === 'trainer' ? {
-          specialties: specialties.split(',').map((s) => s.trim()).filter(Boolean),
-          experienceYears,
-          certifications: ['Chứng chỉ thể hình Quốc gia'],
-          bio: 'Huấn luyện viên chuyên môn cao tại OOAD',
-          branchIds: [branchId],
-        } : undefined,
-      });
-    }, 'Tạo tài khoản thành công! Mật khẩu mặc định là 123456');
-    onClose();
-  };
-
-  return (
-    <Modal
-      title="Tạo tài khoản nhân viên / HLV"
-      onClose={onClose}
-      footer={
-        <>
-          <button className="btn" onClick={onClose}>Hủy</button>
-          <button className="btn primary" onClick={handleSave} id="save-staff">Tạo tài khoản</button>
-        </>
-      }
-    >
-      <div className="form-grid">
-        <div className="field full">
-          <label>Vai trò</label>
-          <div className="chips">
-            <button className={`chip ${role === 'receptionist' ? 'on' : ''}`} onClick={() => setRole('receptionist')}>
-              Lễ tân
-            </button>
-            <button className={`chip ${role === 'trainer' ? 'on' : ''}`} onClick={() => setRole('trainer')}>
-              Huấn luyện viên (PT)
-            </button>
-            <button className={`chip ${role === 'admin' ? 'on' : ''}`} onClick={() => setRole('admin')}>
-              Quản trị viên
-            </button>
-          </div>
-        </div>
-
-        <div className="field">
-          <label>Họ và tên *</label>
-          <input className="input" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="VD: Lê Thị Mai" id="staff-name" />
-        </div>
-        <div className="field">
-          <label>Email đăng nhập *</label>
-          <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="mail@ooad.vn" id="staff-email" />
-        </div>
-        <div className="field">
-          <label>Số điện thoại</label>
-          <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0901234567" />
-        </div>
-
-        {role !== 'admin' && (
-          <div className="field">
-            <label>{role === 'receptionist' ? 'Chi nhánh làm việc *' : 'Chi nhánh chính *'}</label>
-            <select className="input" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
-              {db.branches.map((b) => (
-                <option key={b.id} value={b.id}>{b.name}</option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        {role === 'trainer' && (
-          <>
-            <div className="field full">
-              <label>Chuyên môn (ngăn cách bằng dấu phẩy)</label>
-              <input className="input" value={specialties} onChange={(e) => setSpecialties(e.target.value)} placeholder="Tăng cơ, Giảm mỡ, Yoga..." />
-            </div>
-            <div className="field">
-              <label>Số năm kinh nghiệm</label>
-              <input className="input" type="number" min={0} value={experienceYears} onChange={(e) => setExperienceYears(+e.target.value)} />
-            </div>
-          </>
-        )}
-      </div>
-      <p className="small muted mt16">💡 Mật khẩu đăng nhập ban đầu mặc định là <b>123456</b>. Người dùng có thể tự đổi sau khi đăng nhập.</p>
-    </Modal>
-  );
-}
-
-function EditUserModal({ user, onClose }: { user: User; onClose: () => void }) {
-  const { db, act } = useApp();
-  const [fullName, setFullName] = useState(user.fullName);
-  const [phone, setPhone] = useState(user.phone);
-  const [branchId, setBranchId] = useState(user.branchId || db.branches[0]?.id || '');
-
-  const handleUpdate = () => {
-    act((d) => {
-      const u = d.users.find((x) => x.id === user.id);
-      if (u) {
-        u.fullName = fullName.trim();
-        u.phone = phone.trim();
-        if (u.role === 'receptionist') u.branchId = branchId;
-      }
-    }, 'Cập nhật thông tin người dùng thành công');
-    onClose();
-  };
-
-  return (
-    <Modal
-      title={`Chỉnh sửa: ${user.fullName}`}
-      onClose={onClose}
-      footer={
-        <>
-          <button className="btn" onClick={onClose}>Hủy</button>
-          <button className="btn primary" onClick={handleUpdate} id="save-edit-user">Lưu thay đổi</button>
-        </>
-      }
-    >
-      <div className="form-grid">
-        <div className="field">
-          <label>Họ và tên</label>
-          <input className="input" value={fullName} onChange={(e) => setFullName(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Email</label>
-          <input className="input" value={user.email} disabled />
-        </div>
-        <div className="field">
-          <label>Số điện thoại</label>
-          <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
-        </div>
-        {user.role === 'receptionist' && (
-          <div className="field">
-            <label>Chi nhánh làm việc</label>
-            <select className="input" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
-              {db.branches.map((b) => (
-                <option key={b.id} value={b.id}>{b.name}</option>
-              ))}
-            </select>
-          </div>
-        )}
-      </div>
-    </Modal>
-  );
-}
-
+export { AdminUsersScreen as AdminUsers } from './screens/AdminUsersScreen';
 /* ========================================================================== */
 /*  2. Quản lý Chi nhánh (AdminBranches)                                      */
 /* ========================================================================== */
 export function AdminBranches() {
-  const { db } = useApp();
   const [branches, setBranches] = useState<BranchApiDto[]>([]);
   const [eqCounts, setEqCounts] = useState<Record<string, number>>({});
+  const [staffCounts, setStaffCounts] = useState<Record<string, number>>({});
+  const [classCounts, setClassCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -360,16 +43,35 @@ export function AdminBranches() {
     setLoading(true);
     setErr('');
     try {
-      const [brList, eqList] = await Promise.all([
+      const [brList, eqList, userList, clsList] = await Promise.all([
         branchesApi.getAll(),
         equipmentsApi.getAll().catch(() => []),
+        userService.getAllUsers().catch(() => []),
+        classesApi.getAll().catch(() => []),
       ]);
       setBranches(brList);
-      const counts: Record<string, number> = {};
+
+      const eqMap: Record<string, number> = {};
       for (const e of eqList) {
-        counts[e.branchId] = (counts[e.branchId] || 0) + 1;
+        eqMap[e.branchId] = (eqMap[e.branchId] || 0) + 1;
       }
-      setEqCounts(counts);
+      setEqCounts(eqMap);
+
+      const stMap: Record<string, number> = {};
+      for (const u of userList) {
+        if (u.branchId && u.role !== 'member') {
+          stMap[u.branchId] = (stMap[u.branchId] || 0) + 1;
+        }
+      }
+      setStaffCounts(stMap);
+
+      const clMap: Record<string, number> = {};
+      for (const c of clsList) {
+        if (c.active) {
+          clMap[c.branchId] = (clMap[c.branchId] || 0) + 1;
+        }
+      }
+      setClassCounts(clMap);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Không thể tải danh sách chi nhánh');
     } finally {
@@ -474,9 +176,9 @@ export function AdminBranches() {
       ) : (
         <div className="grid g3">
           {branches.map((b) => {
-            const staffCount = db.users.filter((u) => u.branchId === b.id).length;
+            const staffCount = staffCounts[b.id] ?? 0;
             const eqCount = eqCounts[b.id] ?? 0;
-            const classCount = db.classes.filter((c) => c.branchId === b.id && c.active).length;
+            const classCount = classCounts[b.id] ?? 0;
             return (
               <div className="card hover" key={b.id} style={{ opacity: b.isActive ? 1 : 0.65 }}>
                 <div className="card-head">
@@ -578,11 +280,51 @@ export function AdminBranches() {
 /* ========================================================================== */
 /*  3. Quản lý Danh mục Gói tập (AdminPlans)                                  */
 /* ========================================================================== */
+const planPriorityColor = (priorityLevel: number) =>
+  priorityLevel >= 3 ? '#ff5c8a' : priorityLevel === 2 ? '#7c5cff' : '#3fa9ff';
+
 export function AdminPlans() {
-  const { db, act } = useApp();
+  const { db, act, toast } = useApp();
   const [tab, setTab] = useState<'membership' | 'pt'>('membership');
-  const [msModal, setMsModal] = useState<MembershipPlan | 'new' | null>(null);
-  const [ptModal, setPtModal] = useState<PTPlan | 'new' | null>(null);
+  const [apiMode, setApiMode] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [apiPlans, setApiPlans] = useState<ApiMembershipPlanDto[]>([]);
+  const [apiBranches, setApiBranches] = useState<BranchApiDto[]>([]);
+  const [msModal, setMsModal] = useState<ApiMembershipPlanDto | MembershipPlan | 'new' | null>(null);
+  const [ptModal, setPtModal] = useState<ApiMembershipPlanDto | PTPlan | 'new' | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+
+  const loadPlans = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [planList, brList] = await Promise.all([
+        membershipPlansApi.getAll(),
+        branchesApi.getAll(),
+      ]);
+      setApiPlans(planList);
+      setApiBranches(brList);
+      setApiMode(true);
+    } catch (err) {
+      if (isApiNetworkError(err)) {
+        setApiMode(false);
+      } else {
+        toast((err as Error).message, 'error');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    loadPlans();
+  }, [loadPlans]);
+
+  const apiMsPlans = apiPlans.filter((p) => p.planType.toUpperCase() !== 'PT');
+  const apiPtPlans = apiPlans.filter((p) => p.planType.toUpperCase() === 'PT');
+
+  const branchOptions = apiMode
+    ? apiBranches.map((b) => ({ id: b.id, name: b.name }))
+    : db.branches.map((b) => ({ id: b.id, name: b.name }));
 
   const toggleMsActive = (p: MembershipPlan) => {
     act((d) => {
@@ -598,19 +340,39 @@ export function AdminPlans() {
     }, p.active ? 'Đã vô hiệu gói PT' : 'Đã kích hoạt gói PT');
   };
 
+  const confirmDeleteApiPlan = async () => {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    setDeleteTarget(null);
+    try {
+      await membershipPlansApi.remove(target.id);
+      toast(`Đã xóa gói "${target.name}"`, 'success');
+      await loadPlans();
+    } catch (err) {
+      toast((err as Error).message, 'error');
+    }
+  };
+
   return (
     <>
       <PageHead
         title="Quản lý Danh mục Gói tập"
         desc="Cấu hình các gói hội viên và gói PT 1-kèm-1, phạm vi chi nhánh, số buổi PT tặng kèm và chính sách tạm ngưng (freeze)."
         actions={
-          <button
-            className="btn primary"
-            onClick={() => (tab === 'membership' ? setMsModal('new') : setPtModal('new'))}
-            id="btn-add-plan"
-          >
-            <Plus size={16} /> {tab === 'membership' ? 'Thêm gói hội viên' : 'Thêm gói PT'}
-          </button>
+          <div className="row" style={{ gap: 8 }}>
+            {apiMode && (
+              <button className="btn sm" onClick={loadPlans} disabled={loading}>
+                <RefreshCw size={14} className={loading ? 'spin' : ''} /> Làm mới
+              </button>
+            )}
+            <button
+              className="btn primary"
+              onClick={() => (tab === 'membership' ? setMsModal('new') : setPtModal('new'))}
+              id="btn-add-plan"
+            >
+              <Plus size={16} /> {tab === 'membership' ? 'Thêm gói hội viên' : 'Thêm gói PT'}
+            </button>
+          </div>
         }
       />
 
@@ -618,12 +380,121 @@ export function AdminPlans() {
         value={tab}
         onChange={setTab}
         tabs={[
-          { id: 'membership', label: <><Package size={15} /> Gói Hội Viên</>, count: db.membershipPlans.length },
-          { id: 'pt', label: <><Sparkles size={15} /> Gói Huấn Luyện Viên (PT)</>, count: db.ptPlans.length },
+          {
+            id: 'membership',
+            label: <><Package size={15} /> Gói Hội Viên</>,
+            count: apiMode ? apiMsPlans.length : db.membershipPlans.length,
+          },
+          {
+            id: 'pt',
+            label: <><Sparkles size={15} /> Gói Huấn Luyện Viên (PT)</>,
+            count: apiMode ? apiPtPlans.length : db.ptPlans.length,
+          },
         ]}
       />
 
-      {tab === 'membership' ? (
+      {apiMode ? (
+        loading && apiPlans.length === 0 ? (
+          <div className="card" style={{ padding: 24 }}>Đang tải danh mục gói tập...</div>
+        ) : tab === 'membership' ? (
+          apiMsPlans.length === 0 ? (
+            <div className="card"><Empty text="Chưa có gói hội viên nào" /></div>
+          ) : (
+            <div className="grid g-auto">
+              {apiMsPlans.map((p) => {
+                const color = planPriorityColor(p.priorityLevel);
+                const scopeText = p.isAllBranches
+                  ? 'Tất cả chi nhánh'
+                  : p.branchNames.length > 0
+                    ? p.branchNames.join(', ')
+                    : 'Theo chi nhánh đã chọn';
+                return (
+                  <div className="card plan-card hover" key={p.id}>
+                    <div className="plan-top" style={{ background: color }} />
+                    <div className="row between">
+                      <h2>{p.name}</h2>
+                      <Badge color="green">Đang áp dụng</Badge>
+                    </div>
+                    <div className="price">{fmtMoney(p.price)}</div>
+                    <div className="small dim">
+                      Thời hạn: {p.durationDays} ngày (~{p.durationMonths} tháng) · Ưu tiên waitlist: Cấp {p.priorityLevel}
+                    </div>
+
+                    <ul>
+                      <li><MapPin size={14} /> Phạm vi: {scopeText}</li>
+                      <li><Sparkles size={14} /> Buổi PT tặng kèm: {p.ptSessions || 'Không'}</li>
+                      <li>
+                        <CalendarDays size={14} /> Freeze:{' '}
+                        {p.maxFreezeTimes ? `${p.maxFreezeTimes} lần (tối đa ${p.maxFreezeDays} ngày)` : 'Không cho phép'}
+                      </li>
+                      <li>
+                        <Calendar size={14} /> Lớp nhóm:{' '}
+                        {p.maxBookingsPerMonth ? `${p.maxBookingsPerMonth} lượt/tháng` : 'Không giới hạn'}
+                      </li>
+                    </ul>
+
+                    <div className="row mt16" style={{ marginTop: 'auto', gap: 8 }}>
+                      <button className="btn sm ghost grow" onClick={() => setMsModal(p)} id={`edit-plan-${p.id}`}>
+                        <Edit2 size={14} /> Chỉnh sửa
+                      </button>
+                      <button
+                        className="btn sm danger"
+                        onClick={() => setDeleteTarget({ id: p.id, name: p.name })}
+                        title="Xóa gói (chỉ xóa khi chưa có hội viên đăng ký)"
+                      >
+                        <Trash2 size={14} /> Xóa
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        ) : apiPtPlans.length === 0 ? (
+          <div className="card"><Empty text="Chưa có gói PT nào" /></div>
+        ) : (
+          <div className="grid g-auto">
+            {apiPtPlans.map((p) => {
+              const scopeText = p.isAllBranches
+                ? 'Tất cả chi nhánh'
+                : p.branchNames.length > 0
+                  ? p.branchNames.join(', ')
+                  : 'Theo chi nhánh đã chọn';
+              return (
+                <div className="card plan-card hover" key={p.id}>
+                  <div className="plan-top" style={{ background: 'var(--grad-teal)' }} />
+                  <div className="row between">
+                    <h2>{p.name}</h2>
+                    <Badge color="green">Đang áp dụng</Badge>
+                  </div>
+                  <div className="price">{fmtMoney(p.price)}</div>
+                  <div className="small dim">
+                    ≈ {fmtMoney(Math.round(p.price / Math.max(1, p.ptSessions)))}/buổi
+                  </div>
+
+                  <ul>
+                    <li><Sparkles size={14} /> Số buổi: {p.ptSessions} buổi tập 1-kèm-1</li>
+                    <li><Clock size={14} /> Thời hạn sử dụng: {p.durationDays} ngày</li>
+                    <li><MapPin size={14} /> Phạm vi: {scopeText}</li>
+                  </ul>
+
+                  <div className="row mt16" style={{ marginTop: 'auto', gap: 8 }}>
+                    <button className="btn sm ghost grow" onClick={() => setPtModal(p)} id={`edit-pt-plan-${p.id}`}>
+                      <Edit2 size={14} /> Chỉnh sửa
+                    </button>
+                    <button
+                      className="btn sm danger"
+                      onClick={() => setDeleteTarget({ id: p.id, name: p.name })}
+                    >
+                      <Trash2 size={14} /> Xóa
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )
+      ) : tab === 'membership' ? (
         <div className="grid g-auto">
           {db.membershipPlans.map((p) => (
             <div className="card plan-card hover" key={p.id} style={{ opacity: p.active ? 1 : 0.65 }}>
@@ -695,6 +566,9 @@ export function AdminPlans() {
       {msModal && (
         <MembershipPlanModal
           plan={msModal === 'new' ? null : msModal}
+          apiMode={apiMode}
+          branches={branchOptions}
+          onSaved={loadPlans}
           onClose={() => setMsModal(null)}
         />
       )}
@@ -702,36 +576,115 @@ export function AdminPlans() {
       {ptModal && (
         <PTPlanModal
           plan={ptModal === 'new' ? null : ptModal}
+          apiMode={apiMode}
+          branches={branchOptions}
+          onSaved={loadPlans}
           onClose={() => setPtModal(null)}
+        />
+      )}
+
+      {deleteTarget && (
+        <ConfirmModal
+          title="Xóa gói tập"
+          danger
+          confirmText="Xóa gói"
+          message={<>Bạn có chắc muốn xóa gói <b>{deleteTarget.name}</b>? (Chỉ xóa được khi chưa có hội viên đăng ký.)</>}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={confirmDeleteApiPlan}
         />
       )}
     </>
   );
 }
 
-function MembershipPlanModal({ plan, onClose }: { plan: MembershipPlan | null; onClose: () => void }) {
-  const { db, act } = useApp();
-  const [name, setName] = useState(plan?.name || '');
-  const [durationMonths, setDurationMonths] = useState(plan?.durationMonths || 1);
-  const [price, setPrice] = useState(plan?.price || 500000);
-  const [priority, setPriority] = useState(plan?.priority || 1);
-  const [freePTSessions, setFreePTSessions] = useState(plan?.freePTSessions || 0);
-  const [maxFreezeTimes, setMaxFreezeTimes] = useState(plan?.maxFreezeTimes || 0);
-  const [maxFreezeDays, setMaxFreezeDays] = useState(plan?.maxFreezeDays || 0);
-  const [classBookingsPerWeek, setClassBookingsPerWeek] = useState(plan?.classBookingsPerWeek || 0);
-  const [description, setDescription] = useState(plan?.description || '');
-  const [color, setColor] = useState(plan?.color || '#7c5cff');
-  const [scopeAll, setScopeAll] = useState(plan ? plan.branchScope === 'all' : true);
-  const [selectedBranches, setSelectedBranches] = useState<string[]>(
-    plan && Array.isArray(plan.branchScope) ? plan.branchScope : [db.branches[0]?.id || '']
-  );
+function isApiPlan(p: ApiMembershipPlanDto | MembershipPlan | PTPlan | null): p is ApiMembershipPlanDto {
+  return !!p && 'durationDays' in p;
+}
 
-  const handleSave = () => {
+function MembershipPlanModal({
+  plan,
+  apiMode,
+  branches,
+  onSaved,
+  onClose,
+}: {
+  plan: ApiMembershipPlanDto | MembershipPlan | null;
+  apiMode: boolean;
+  branches: { id: string; name: string }[];
+  onSaved: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const { act, toast } = useApp();
+  const apiPlan = isApiPlan(plan) ? plan : null;
+  const localPlan = plan && !isApiPlan(plan) ? plan : null;
+
+  const [name, setName] = useState(plan?.name || '');
+  const [durationDays, setDurationDays] = useState(apiPlan ? apiPlan.durationDays : (localPlan?.durationMonths || 1) * 30);
+  const [price, setPrice] = useState(plan?.price ?? 790000);
+  const [priority, setPriority] = useState(apiPlan ? apiPlan.priorityLevel : localPlan?.priority ?? 1);
+  const [freePTSessions, setFreePTSessions] = useState(apiPlan ? apiPlan.ptSessions : localPlan?.freePTSessions ?? 0);
+  const [maxFreezeTimes, setMaxFreezeTimes] = useState(apiPlan ? apiPlan.maxFreezeTimes : localPlan?.maxFreezeTimes ?? 0);
+  const [maxFreezeDays, setMaxFreezeDays] = useState(apiPlan ? apiPlan.maxFreezeDays : localPlan?.maxFreezeDays ?? 0);
+  const [maxBookingsPerMonth, setMaxBookingsPerMonth] = useState(
+    apiPlan ? apiPlan.maxBookingsPerMonth : (localPlan?.classBookingsPerWeek ?? 0) * 4,
+  );
+  const [description, setDescription] = useState(localPlan?.description || '');
+  const [color, setColor] = useState(localPlan?.color || '#7c5cff');
+  const [scopeAll, setScopeAll] = useState(
+    apiPlan ? apiPlan.isAllBranches : localPlan ? localPlan.branchScope === 'all' : true,
+  );
+  const [selectedBranches, setSelectedBranches] = useState<string[]>(
+    apiPlan && !apiPlan.isAllBranches && apiPlan.branchIds.length > 0
+      ? apiPlan.branchIds
+      : localPlan && Array.isArray(localPlan.branchScope)
+        ? localPlan.branchScope
+        : branches[0]?.id ? [branches[0].id] : [],
+  );
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!name.trim()) return toast('Vui lòng nhập tên gói', 'error');
+    if (!scopeAll && selectedBranches.length === 0) return toast('Vui lòng chọn ít nhất 1 chi nhánh', 'error');
+
+    if (apiMode && getAuthToken()) {
+      setSaving(true);
+      try {
+        const payload = {
+          name: name.trim(),
+          durationDays: Math.max(1, durationDays),
+          price: Math.max(0, price),
+          priorityLevel: priority,
+          maxBookingsPerMonth: Math.max(0, maxBookingsPerMonth),
+          maxFreezeTimes: Math.max(0, maxFreezeTimes),
+          maxFreezeDays: Math.max(0, maxFreezeDays),
+          isAllBranches: scopeAll,
+          planType: 'MEMBERSHIP' as const,
+          ptSessions: Math.max(0, freePTSessions),
+          branchIds: scopeAll ? [] : selectedBranches,
+        };
+        if (apiPlan) {
+          await membershipPlansApi.update(apiPlan.id, payload);
+          toast('Đã cập nhật gói hội viên', 'success');
+        } else {
+          await membershipPlansApi.create(payload);
+          toast('Đã thêm gói hội viên mới', 'success');
+        }
+        await onSaved();
+        onClose();
+      } catch (err) {
+        toast((err as Error).message, 'error');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
     act((d) => {
-      if (!name.trim()) throw new Error('Vui lòng nhập tên gói');
       const branchScope = scopeAll ? 'all' : selectedBranches;
+      const durationMonths = Math.max(1, Math.round(durationDays / 30));
+      const classBookingsPerWeek = maxBookingsPerMonth > 0 ? Math.max(1, Math.round(maxBookingsPerMonth / 4)) : 0;
       const data: MembershipPlan = {
-        id: plan ? plan.id : uid('mp'),
+        id: localPlan ? localPlan.id : uid('mp'),
         name: name.trim(),
         durationMonths,
         price,
@@ -744,16 +697,16 @@ function MembershipPlanModal({ plan, onClose }: { plan: MembershipPlan | null; o
         benefits: ['Tập luyện tại chi nhánh áp dụng', `${classBookingsPerWeek ? `${classBookingsPerWeek} lớp/tuần` : 'Lớp nhóm không giới hạn'}`],
         color,
         branchScope,
-        active: plan ? plan.active : true,
+        active: localPlan ? localPlan.active : true,
       };
 
-      if (plan) {
-        const idx = d.membershipPlans.findIndex((x) => x.id === plan.id);
+      if (localPlan) {
+        const idx = d.membershipPlans.findIndex((x) => x.id === localPlan.id);
         if (idx >= 0) d.membershipPlans[idx] = data;
       } else {
         d.membershipPlans.push(data);
       }
-    }, plan ? 'Đã cập nhật gói hội viên' : 'Đã thêm gói hội viên mới');
+    }, localPlan ? 'Đã cập nhật gói hội viên' : 'Đã thêm gói hội viên mới');
     onClose();
   };
 
@@ -764,8 +717,10 @@ function MembershipPlanModal({ plan, onClose }: { plan: MembershipPlan | null; o
       onClose={onClose}
       footer={
         <>
-          <button className="btn" onClick={onClose}>Hủy</button>
-          <button className="btn primary" onClick={handleSave} id="save-ms-plan">Lưu gói tập</button>
+          <button className="btn" onClick={onClose} disabled={saving}>Hủy</button>
+          <button className="btn primary" onClick={handleSave} disabled={saving} id="save-ms-plan">
+            {saving ? 'Đang lưu...' : 'Lưu gói tập'}
+          </button>
         </>
       }
     >
@@ -779,13 +734,13 @@ function MembershipPlanModal({ plan, onClose }: { plan: MembershipPlan | null; o
           <input className="input" type="number" step="50000" value={price} onChange={(e) => setPrice(+e.target.value)} id="plan-price" />
         </div>
         <div className="field">
-          <label>Thời hạn (tháng) *</label>
-          <input className="input" type="number" min={1} value={durationMonths} onChange={(e) => setDurationMonths(+e.target.value)} />
+          <label>Thời hạn (ngày) *</label>
+          <input className="input" type="number" min={1} value={durationDays} onChange={(e) => setDurationDays(+e.target.value)} />
         </div>
         <div className="field">
           <label>Cấp độ ưu tiên Waitlist (1: Thấp, 3: VIP) *</label>
           <select className="input" value={priority} onChange={(e) => setPriority(+e.target.value)}>
-            <option value={1}>Cấp 1 (Gói Basic)</option>
+            <option value={1}>Cấp 1 (Gói Basic / Standard)</option>
             <option value={2}>Cấp 2 (Gói Tiêu chuẩn)</option>
             <option value={3}>Cấp 3 (Gói VIP - Ưu tiên hàng đầu)</option>
           </select>
@@ -795,8 +750,8 @@ function MembershipPlanModal({ plan, onClose }: { plan: MembershipPlan | null; o
           <input className="input" type="number" min={0} value={freePTSessions} onChange={(e) => setFreePTSessions(+e.target.value)} />
         </div>
         <div className="field">
-          <label>Giới hạn lớp học / tuần (0 = Không giới hạn)</label>
-          <input className="input" type="number" min={0} value={classBookingsPerWeek} onChange={(e) => setClassBookingsPerWeek(+e.target.value)} />
+          <label>Giới hạn lớp học / tháng (0 = Không giới hạn)</label>
+          <input className="input" type="number" min={0} value={maxBookingsPerMonth} onChange={(e) => setMaxBookingsPerMonth(+e.target.value)} />
         </div>
         <div className="field">
           <label>Số lần Freeze tối đa</label>
@@ -806,10 +761,12 @@ function MembershipPlanModal({ plan, onClose }: { plan: MembershipPlan | null; o
           <label>Tổng số ngày Freeze tối đa</label>
           <input className="input" type="number" min={0} value={maxFreezeDays} onChange={(e) => setMaxFreezeDays(+e.target.value)} />
         </div>
-        <div className="field full">
-          <label>Màu đại diện gói</label>
-          <input type="color" value={color} onChange={(e) => setColor(e.target.value)} style={{ width: 80, height: 38, border: 'none', background: 'transparent', cursor: 'pointer' }} />
-        </div>
+        {!apiMode && (
+          <div className="field full">
+            <label>Màu đại diện gói</label>
+            <input type="color" value={color} onChange={(e) => setColor(e.target.value)} style={{ width: 80, height: 38, border: 'none', background: 'transparent', cursor: 'pointer' }} />
+          </div>
+        )}
         <div className="field full">
           <label>Phạm vi chi nhánh áp dụng</label>
           <div className="row wrap">
@@ -820,10 +777,11 @@ function MembershipPlanModal({ plan, onClose }: { plan: MembershipPlan | null; o
           </div>
           {!scopeAll && (
             <div className="chips mt8">
-              {db.branches.map((b) => {
+              {branches.map((b) => {
                 const sel = selectedBranches.includes(b.id);
                 return (
                   <button
+                    type="button"
                     key={b.id}
                     className={`chip ${sel ? 'on' : ''}`}
                     onClick={() => setSelectedBranches(sel ? selectedBranches.filter((x) => x !== b.id) : [...selectedBranches, b.id])}
@@ -835,49 +793,108 @@ function MembershipPlanModal({ plan, onClose }: { plan: MembershipPlan | null; o
             </div>
           )}
         </div>
-        <div className="field full">
-          <label>Mô tả gói tập</label>
-          <textarea className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Tóm tắt đặc quyền của gói..." />
-        </div>
+        {!apiMode && (
+          <div className="field full">
+            <label>Mô tả gói tập</label>
+            <textarea className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Tóm tắt đặc quyền của gói..." />
+          </div>
+        )}
       </div>
     </Modal>
   );
 }
 
-function PTPlanModal({ plan, onClose }: { plan: PTPlan | null; onClose: () => void }) {
-  const { db, act } = useApp();
-  const [name, setName] = useState(plan?.name || '');
-  const [sessions, setSessions] = useState(plan?.sessions || 10);
-  const [validityDays, setValidityDays] = useState(plan?.validityDays || 60);
-  const [price, setPrice] = useState(plan?.price || 3000000);
-  const [description, setDescription] = useState(plan?.description || '');
-  const [scopeAll, setScopeAll] = useState(plan ? plan.branchScope === 'all' : true);
-  const [selectedBranches, setSelectedBranches] = useState<string[]>(
-    plan && Array.isArray(plan.branchScope) ? plan.branchScope : [db.branches[0]?.id || '']
-  );
+function PTPlanModal({
+  plan,
+  apiMode,
+  branches,
+  onSaved,
+  onClose,
+}: {
+  plan: ApiMembershipPlanDto | PTPlan | null;
+  apiMode: boolean;
+  branches: { id: string; name: string }[];
+  onSaved: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const { act, toast } = useApp();
+  const apiPlan = isApiPlan(plan) ? plan : null;
+  const localPlan = plan && !isApiPlan(plan) ? plan : null;
 
-  const handleSave = () => {
+  const [name, setName] = useState(plan?.name || '');
+  const [sessions, setSessions] = useState(apiPlan ? apiPlan.ptSessions : localPlan?.sessions ?? 10);
+  const [validityDays, setValidityDays] = useState(apiPlan ? apiPlan.durationDays : localPlan?.validityDays ?? 60);
+  const [price, setPrice] = useState(plan?.price ?? 3500000);
+  const [description, setDescription] = useState(localPlan?.description || '');
+  const [scopeAll, setScopeAll] = useState(
+    apiPlan ? apiPlan.isAllBranches : localPlan ? localPlan.branchScope === 'all' : true,
+  );
+  const [selectedBranches, setSelectedBranches] = useState<string[]>(
+    apiPlan && !apiPlan.isAllBranches && apiPlan.branchIds.length > 0
+      ? apiPlan.branchIds
+      : localPlan && Array.isArray(localPlan.branchScope)
+        ? localPlan.branchScope
+        : branches[0]?.id ? [branches[0].id] : [],
+  );
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!name.trim()) return toast('Vui lòng nhập tên gói PT', 'error');
+    if (!scopeAll && selectedBranches.length === 0) return toast('Vui lòng chọn ít nhất 1 chi nhánh', 'error');
+
+    if (apiMode && getAuthToken()) {
+      setSaving(true);
+      try {
+        const payload = {
+          name: name.trim(),
+          durationDays: Math.max(1, validityDays),
+          price: Math.max(0, price),
+          priorityLevel: 1,
+          maxBookingsPerMonth: 0,
+          maxFreezeTimes: 0,
+          maxFreezeDays: 0,
+          isAllBranches: scopeAll,
+          planType: 'PT' as const,
+          ptSessions: Math.max(1, sessions),
+          branchIds: scopeAll ? [] : selectedBranches,
+        };
+        if (apiPlan) {
+          await membershipPlansApi.update(apiPlan.id, payload);
+          toast('Đã cập nhật gói PT', 'success');
+        } else {
+          await membershipPlansApi.create(payload);
+          toast('Đã thêm gói PT mới', 'success');
+        }
+        await onSaved();
+        onClose();
+      } catch (err) {
+        toast((err as Error).message, 'error');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
     act((d) => {
-      if (!name.trim()) throw new Error('Vui lòng nhập tên gói PT');
       const branchScope = scopeAll ? 'all' : selectedBranches;
       const data: PTPlan = {
-        id: plan ? plan.id : uid('ptp'),
+        id: localPlan ? localPlan.id : uid('ptp'),
         name: name.trim(),
         sessions,
         validityDays,
         price,
         branchScope,
         description,
-        active: plan ? plan.active : true,
+        active: localPlan ? localPlan.active : true,
       };
 
-      if (plan) {
-        const idx = d.ptPlans.findIndex((x) => x.id === plan.id);
+      if (localPlan) {
+        const idx = d.ptPlans.findIndex((x) => x.id === localPlan.id);
         if (idx >= 0) d.ptPlans[idx] = data;
       } else {
         d.ptPlans.push(data);
       }
-    }, plan ? 'Đã cập nhật gói PT' : 'Đã thêm gói PT mới');
+    }, localPlan ? 'Đã cập nhật gói PT' : 'Đã thêm gói PT mới');
     onClose();
   };
 
@@ -887,8 +904,10 @@ function PTPlanModal({ plan, onClose }: { plan: PTPlan | null; onClose: () => vo
       onClose={onClose}
       footer={
         <>
-          <button className="btn" onClick={onClose}>Hủy</button>
-          <button className="btn primary" onClick={handleSave} id="save-pt-plan">Lưu gói PT</button>
+          <button className="btn" onClick={onClose} disabled={saving}>Hủy</button>
+          <button className="btn primary" onClick={handleSave} disabled={saving} id="save-pt-plan">
+            {saving ? 'Đang lưu...' : 'Lưu gói PT'}
+          </button>
         </>
       }
     >
@@ -919,10 +938,11 @@ function PTPlanModal({ plan, onClose }: { plan: PTPlan | null; onClose: () => vo
           </div>
           {!scopeAll && (
             <div className="chips mt8">
-              {db.branches.map((b) => {
+              {branches.map((b) => {
                 const sel = selectedBranches.includes(b.id);
                 return (
                   <button
+                    type="button"
                     key={b.id}
                     className={`chip ${sel ? 'on' : ''}`}
                     onClick={() => setSelectedBranches(sel ? selectedBranches.filter((x) => x !== b.id) : [...selectedBranches, b.id])}
@@ -934,10 +954,12 @@ function PTPlanModal({ plan, onClose }: { plan: PTPlan | null; onClose: () => vo
             </div>
           )}
         </div>
-        <div className="field full">
-          <label>Mô tả gói PT</label>
-          <textarea className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
-        </div>
+        {!apiMode && (
+          <div className="field full">
+            <label>Mô tả gói PT</label>
+            <textarea className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
+          </div>
+        )}
       </div>
     </Modal>
   );
@@ -948,99 +970,3 @@ function PTPlanModal({ plan, onClose }: { plan: PTPlan | null; onClose: () => vo
 /* ========================================================================== */
 export { AdminClassesScreen as AdminClasses } from './screens/AdminClassesScreen';
 
-/* ========================================================================== */
-/*  5. Cấu hình Hệ thống (AdminSettings)                                      */
-/* ========================================================================== */
-export function AdminSettings() {
-  const { db, act } = useApp();
-  const [f, setF] = useState<Settings>({ ...db.settings });
-
-  const handleSave = () => {
-    act((d) => {
-      d.settings = { ...f };
-    }, 'Đã lưu cấu hình hệ thống');
-  };
-
-  return (
-    <>
-      <PageHead
-        title="Cấu hình Hệ thống"
-        desc="Thiết lập các mốc thời gian nhắc lịch, giới hạn hủy và xử lý danh sách chờ tự động."
-        actions={
-          <button className="btn primary" onClick={handleSave} id="btn-save-settings">
-            <Save size={16} /> Lưu cấu hình
-          </button>
-        }
-      />
-
-      <div className="card" style={{ maxWidth: 760 }}>
-        <div className="col" style={{ gap: 20 }}>
-          <div className="field">
-            <label>Thời gian nhắc lịch tập sắp diễn ra (giờ trước buổi tập)</label>
-            <input
-              type="number"
-              min={1}
-              max={24}
-              className="input"
-              value={f.reminderHours}
-              onChange={(e) => setF({ ...f, reminderHours: +e.target.value })}
-            />
-            <span className="small dim">Mặc định 2 giờ. Gửi thông báo đến hội viên và HLV.</span>
-          </div>
-
-          <div className="field">
-            <label>Thời hạn được hủy lịch hoàn trả lượt/buổi (giờ trước buổi tập)</label>
-            <input
-              type="number"
-              min={1}
-              max={48}
-              className="input"
-              value={f.cancelDeadlineHours}
-              onChange={(e) => setF({ ...f, cancelDeadlineHours: +e.target.value })}
-            />
-            <span className="small dim">Mặc định 4 giờ. Hủy sau mốc này sẽ bị tính lượt (late cancelled).</span>
-          </div>
-
-          <div className="field">
-            <label>Mốc hết hạn Danh sách chờ (Waitlist Cutoff) (giờ trước buổi tập)</label>
-            <input
-              type="number"
-              min={1}
-              max={24}
-              className="input"
-              value={f.waitlistCutoffHours}
-              onChange={(e) => setF({ ...f, waitlistCutoffHours: +e.target.value })}
-            />
-            <span className="small dim">Theo nghiệp vụ: Khoảng 8 tiếng trước giờ học, nếu hội viên trong hàng chờ vẫn chưa được xếp chỗ thì thông báo lớp đã đầy và yêu cầu chọn lịch khác.</span>
-          </div>
-
-          <div className="field">
-            <label>Cảnh báo gói hội viên / gói PT sắp hết hạn (ngày trước hạn)</label>
-            <input
-              type="number"
-              min={1}
-              max={30}
-              className="input"
-              value={f.expiryWarningDays}
-              onChange={(e) => setF({ ...f, expiryWarningDays: +e.target.value })}
-            />
-            <span className="small dim">Gửi nhắc nhở gia hạn khi gói còn dưới số ngày này (mặc định 7 ngày).</span>
-          </div>
-
-          <div className="field">
-            <label>Cảnh báo gói PT sắp hết số buổi</label>
-            <input
-              type="number"
-              min={1}
-              max={5}
-              className="input"
-              value={f.ptLowSessions}
-              onChange={(e) => setF({ ...f, ptLowSessions: +e.target.value })}
-            />
-            <span className="small dim">Gửi thông báo khi gói PT còn dưới số buổi này (mặc định 2 buổi).</span>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}

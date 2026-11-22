@@ -38,31 +38,6 @@ export interface ApiMetricTypeDto {
   isActive: boolean;
 }
 
-export interface ApiNutritionPlanDto {
-  id: string;
-  memberId: string;
-  memberName?: string;
-  createdByTrainerId?: string;
-  trainerName?: string;
-  title: string;
-  targetCalories: number;
-  proteinGrams: number;
-  carbsGrams: number;
-  fatGrams: number;
-  content?: string;
-  createdAt: string;
-}
-
-export interface ApiCreateNutritionPlanPayload {
-  memberId: string;
-  title: string;
-  targetCalories: number;
-  proteinGrams: number;
-  carbsGrams: number;
-  fatGrams: number;
-  content?: string;
-}
-
 export const bodyMeasurementsApi = {
   getMyMeasurements: () => request<ApiBodyMeasurementDto[]>('/body-measurements/me'),
 
@@ -72,13 +47,10 @@ export const bodyMeasurementsApi = {
       body: JSON.stringify(payload),
     }),
 
-  getMetricTypes: () => request<ApiMetricTypeDto[]>('/body-measurements/metric-types'),
-
-  getNutritionPlans: () => request<ApiNutritionPlanDto[]>('/body-measurements/nutrition-plans'),
-
-  createNutritionPlan: (payload: ApiCreateNutritionPlanPayload) =>
-    request<ApiNutritionPlanDto>('/body-measurements/nutrition-plans', {
-      method: 'POST',
-      body: JSON.stringify(payload),
+  deleteMeasurement: (id: string) =>
+    request<void>(`/body-measurements/${id}`, {
+      method: 'DELETE',
     }),
+
+  getMetricTypes: () => request<ApiMetricTypeDto[]>('/body-measurements/metric-types'),
 };

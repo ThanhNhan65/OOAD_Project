@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { TrainerItem, UpdateTrainerProfilePayload } from '../services/trainer.service';
-import { useApp } from '../store/AppContext';
+import { branchesApi, type BranchApiDto } from '../api/branchesApi';
 
 interface TrainerProfileFormProps {
   trainer: TrainerItem;
@@ -9,12 +9,22 @@ interface TrainerProfileFormProps {
 }
 
 export const TrainerProfileForm: React.FC<TrainerProfileFormProps> = ({ trainer, onSave, loading = false }) => {
-  const { db } = useApp();
+  const [branches, setBranches] = useState<BranchApiDto[]>([]);
   const [specialty, setSpecialty] = useState(trainer.specialty || '');
   const [experienceYears, setExperienceYears] = useState(trainer.experienceYears || 0);
   const [bio, setBio] = useState(trainer.bio || '');
   const [phone, setPhone] = useState(trainer.phone || '');
-  const [branchId, setBranchId] = useState(trainer.branchId || db.branches[0]?.id || '');
+  const [branchId, setBranchId] = useState(trainer.branchId || '');
+
+  useEffect(() => {
+    branchesApi
+      .getAll()
+      .then((list) => {
+        setBranches(list);
+        setBranchId((prev) => prev || trainer.branchId || list[0]?.id || '');
+      })
+      .catch(() => {});
+  }, [trainer.branchId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,7 +71,7 @@ export const TrainerProfileForm: React.FC<TrainerProfileFormProps> = ({ trainer,
             onChange={(e) => setBranchId(e.target.value)}
             required
           >
-            {db.branches.map((b) => (
+            {branches.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
               </option>

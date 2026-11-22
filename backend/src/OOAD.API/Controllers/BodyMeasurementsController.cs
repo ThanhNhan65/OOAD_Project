@@ -47,6 +47,21 @@ public class BodyMeasurementsController : ApiControllerBase
     }
 
     /// <summary>
+    /// DELETE /api/body-measurements/{id}
+    /// Xóa một mốc đo chỉ số cơ thể của hội viên hiện tại.
+    /// </summary>
+    [HttpDelete("{id:guid}")]
+    [Authorize]
+    public async Task<IActionResult> DeleteMeasurement(Guid id, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        await _measurementService.DeleteMeasurementAsync(userId.Value, id, cancellationToken);
+        return NoContent();
+    }
+
+    /// <summary>
     /// GET /api/body-measurements/metric-types
     /// Lấy danh sách các loại chỉ số đo lường đang kích hoạt trong hệ thống.
     /// </summary>
@@ -56,36 +71,6 @@ public class BodyMeasurementsController : ApiControllerBase
     {
         var list = await _measurementService.GetMetricTypesAsync(cancellationToken);
         return Ok(list);
-    }
-
-    /// <summary>
-    /// GET /api/body-measurements/nutrition-plans
-    /// Lấy danh sách kế hoạch dinh dưỡng do HLV thiết lập cho hội viên đang đăng nhập.
-    /// </summary>
-    [HttpGet("nutrition-plans")]
-    [Authorize]
-    public async Task<ActionResult<IEnumerable<NutritionPlanDto>>> GetNutritionPlans(CancellationToken cancellationToken)
-    {
-        var userId = GetCurrentUserId();
-        if (userId == null) return Unauthorized();
-
-        var list = await _measurementService.GetNutritionPlansAsync(userId.Value, cancellationToken);
-        return Ok(list);
-    }
-
-    /// <summary>
-    /// POST /api/body-measurements/nutrition-plans
-    /// HLV thiết lập kế hoạch dinh dưỡng cho hội viên.
-    /// </summary>
-    [HttpPost("nutrition-plans")]
-    [Authorize(Roles = "Trainer,Admin")]
-    public async Task<ActionResult<NutritionPlanDto>> CreateNutritionPlan([FromBody] CreateNutritionPlanRequest request, CancellationToken cancellationToken)
-    {
-        var userId = GetCurrentUserId();
-        if (userId == null) return Unauthorized();
-
-        var created = await _measurementService.CreateNutritionPlanAsync(userId.Value, request, cancellationToken);
-        return Ok(created);
     }
 
     private Guid? GetCurrentUserId()

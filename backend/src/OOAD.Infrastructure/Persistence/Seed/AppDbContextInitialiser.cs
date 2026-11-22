@@ -395,6 +395,9 @@ public class AppDbContextInitialiser
 
         // 6. Seed bổ sung (Idempotent) cho phân hệ PT 1-kèm-1, Tiến độ InBody & Đánh giá
         await SeedPtAndProgressDemoAsync();
+
+        // 7. Seed bổ sung (Idempotent) danh mục gói tập đa dạng, gói PT & yêu cầu Freeze chờ duyệt
+        await SeedPlansAndFreezeDemoAsync();
     }
 
     private async Task SeedGroupClassesAndWaitlistDemoAsync()
@@ -918,6 +921,93 @@ public class AppDbContextInitialiser
             await _context.NutritionPlans.AddAsync(plan);
             await _context.SaveChangesAsync();
             _logger.LogInformation("Seed kế hoạch dinh dưỡng mẫu thành công.");
+        }
+    }
+
+    private async Task SeedPlansAndFreezeDemoAsync()
+    {
+        var vnOffset = TimeSpan.FromHours(7);
+        var todayVn = DateTime.UtcNow.Add(vnOffset).Date;
+
+        // 1. Bổ sung gói hội viên Basic 3 Tháng nếu chưa có
+        if (!await _context.MembershipPlans.AnyAsync(p => p.Name == "Gói Basic 3 Tháng"))
+        {
+            await _context.MembershipPlans.AddAsync(new MembershipPlan
+            {
+                Name = "Gói Basic 3 Tháng",
+                DurationDays = 90,
+                Price = 2_100_000m,
+                PriorityLevel = 2,
+                MaxBookingsPerMonth = 24,
+                MaxFreezeTimes = 1,
+                MaxFreezeDays = 14,
+                IsAllBranches = true,
+                PlanType = "MEMBERSHIP",
+                PtSessions = 1
+            });
+            await _context.SaveChangesAsync();
+        }
+
+        // 2. Bổ sung các gói PT 1-kèm-1 nếu chưa có gói PlanType = "PT"
+        if (!await _context.MembershipPlans.AnyAsync(p => p.PlanType == "PT"))
+        {
+            await _context.MembershipPlans.AddRangeAsync(
+                new MembershipPlan
+                {
+                    Name = "Gói PT 10 Buổi Cá Nhân",
+                    DurationDays = 60,
+                    Price = 3_500_000m,
+                    PriorityLevel = 1,
+                    MaxBookingsPerMonth = 0,
+                    MaxFreezeTimes = 0,
+                    MaxFreezeDays = 0,
+                    IsAllBranches = true,
+                    PlanType = "PT",
+                    PtSessions = 10
+                },
+                new MembershipPlan
+                {
+                    Name = "Gói PT 20 Buổi Chuyên Sâu",
+                    DurationDays = 120,
+                    Price = 6_400_000m,
+                    PriorityLevel = 1,
+                    MaxBookingsPerMonth = 0,
+                    MaxFreezeTimes = 0,
+                    MaxFreezeDays = 0,
+                    IsAllBranches = true,
+                    PlanType = "PT",
+                    PtSessions = 20
+                }
+            );
+            await _context.SaveChangesAsync();
+            _logger.LogInformation("Seed danh mục gói PT 1-kèm-1 thành công.");
+        }
+
+        // 3. Bổ sung 1 yêu cầu Freeze đang chờ duyệt để Lễ tân & Hội viên test
+        if (!await _context.FreezeRequests.AnyAsync())
+        {
+            var vipMembership = await _context.Memberships
+                .Include(m => m.Plan)
+                .Where(m => m.Plan.MaxFreezeTimes > 0 && m.Status == MembershipStatus.Active && m.EndDate > DateTime.UtcNow.AddDays(15))
+                .FirstOrDefaultAsync();
+
+            if (vipMembership != null)
+            {
+                var fromDate = todayVn.AddDays(5);
+                var days = 7;
+                await _context.FreezeRequests.AddAsync(new FreezeRequest
+                {
+                    MembershipId = vipMembership.Id,
+                    FromDate = DateTime.SpecifyKind(fromDate, DateTimeKind.Utc),
+                    ToDate = DateTime.SpecifyKind(fromDate.AddDays(days - 1), DateTimeKind.Utc),
+                    Days = days,
+                    Reason = "Đi công tác nước ngoài 1 tuần, cần bảo lưu thời hạn gói tập.",
+                    Status = FreezeRequestStatus.Pending,
+                    CreatedAt = DateTime.UtcNow.AddHours(-3)
+                });
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("Seed yêu cầu Freeze chờ duyệt mẫu thành công.");
+            }
         }
     }
 }

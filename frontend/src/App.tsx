@@ -14,7 +14,6 @@ import { MemberHome } from './pages/member/MemberHome';
 import { MemberMemberships } from './pages/member/MemberMemberships';
 import { MemberClasses, MemberPT, MemberBookings } from './pages/member/MemberBooking';
 import { MemberProfile, MemberProgress, MemberCard, MemberPayments, MemberEquipment } from './pages/member/MemberMisc';
-import { GymRules } from './pages/member/GymRules';
 
 // Trainer
 import {
@@ -25,12 +24,6 @@ import {
   TrainerReviews,
   TrainerProfile,
 } from './pages/trainer/TrainerPages';
-
-// Trainers & Trainer Dashboard Modules
-import { TrainersListPage } from './pages/trainers/TrainersListPage';
-import { TrainerDetailPage } from './pages/trainers/TrainerDetailPage';
-import { TrainerDashboardSchedulePage } from './pages/trainer-dashboard/TrainerDashboardSchedulePage';
-import { TrainerDashboardProfilePage } from './pages/trainer-dashboard/TrainerDashboardProfilePage';
 
 // Receptionist
 import {
@@ -50,7 +43,6 @@ import {
   AdminBranches,
   AdminPlans,
   AdminClasses,
-  AdminSettings,
 } from './pages/admin/AdminPages';
 
 function RootRedirect() {
@@ -62,8 +54,9 @@ function RootRedirect() {
 function RoleProfileRedirect() {
   const { user } = useApp();
   if (!user) return <Navigate to="/login" replace />;
-  const rolePath = user.role === 'receptionist' ? 'staff' : user.role;
-  return <Navigate to={`/${rolePath}/profile`} replace />;
+  if (user.role === 'member') return <Navigate to="/member/profile" replace />;
+  if (user.role === 'trainer') return <Navigate to="/trainer/profile" replace />;
+  return <AccountPage />;
 }
 
 export default function App() {
@@ -88,7 +81,6 @@ export default function App() {
             <Route path="memberships" element={<MemberMemberships />} />
             <Route path="payments" element={<MemberPayments />} />
             <Route path="equipment" element={<MemberEquipment />} />
-            <Route path="rules" element={<GymRules />} />
             <Route path="profile" element={<MemberProfile />} />
           </Route>
 
@@ -124,7 +116,6 @@ export default function App() {
             <Route path="classes" element={<AdminClasses />} />
             <Route path="equipment" element={<EquipmentManage />} />
             <Route path="checkins" element={<CheckinHistory />} />
-            <Route path="settings" element={<AdminSettings />} />
             <Route path="profile" element={<AccountPage />} />
           </Route>
 
@@ -133,13 +124,6 @@ export default function App() {
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/account" element={<RoleProfileRedirect />} />
             <Route path="/profile" element={<RoleProfileRedirect />} />
-            <Route path="/rules" element={<GymRules />} />
-            {/* Trainers Directory for Members */}
-            <Route path="/trainers" element={<TrainersListPage />} />
-            <Route path="/trainers/:id" element={<TrainerDetailPage />} />
-            {/* Trainer Dashboard dedicated routes */}
-            <Route path="/trainer-dashboard/schedule" element={<TrainerDashboardSchedulePage />} />
-            <Route path="/trainer-dashboard/profile" element={<TrainerDashboardProfilePage />} />
           </Route>
 
           {/* Fallback */}

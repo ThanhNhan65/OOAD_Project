@@ -4,41 +4,32 @@ import { useApp } from '../store/AppContext';
 import { Avatar, PageHead, Badge } from '../components/ui';
 import { roleLabel } from '../components/labels';
 import { MemberCardWidget } from '../components/member-card';
-import * as L from '../store/logic';
 import { userService, authService } from '../api';
 
 export function AccountPage() {
-  const { db, user, act, toast } = useApp();
+  const { user, updateCurrentUser, toast } = useApp();
   const [fullName, setFullName] = useState(user?.fullName || '');
   const [phone, setPhone] = useState(user?.phone || '');
   const [pw, setPw] = useState({ old: '', n1: '', n2: '' });
-
-  const branch = user?.branchId ? L.branchById(db, user.branchId) : null;
+  const [saving, setSaving] = useState(false);
 
   const saveProfile = async () => {
     if (!fullName.trim()) {
       toast('Họ tên không được để trống', 'error');
       return;
     }
+    setSaving(true);
     try {
-      try {
-        await userService.updateMe({
-          fullName: fullName.trim(),
-          phone: phone.trim(),
-        });
-      } catch {
-        // Fallback or offline
-      }
-
-      act((d) => {
-        const u = d.users.find((x) => x.id === user?.id);
-        if (u) {
-          u.fullName = fullName.trim();
-          u.phone = phone.trim();
-        }
-      }, 'Đã lưu thông tin tài khoản');
+      await userService.updateMe({
+        fullName: fullName.trim(),
+        phone: phone.trim(),
+      });
+      updateCurrentUser({ fullName: fullName.trim(), phone: phone.trim() });
+      toast('Đã lưu thông tin tài khoản', 'success');
     } catch (e) {
       toast((e as Error).message, 'error');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -48,28 +39,13 @@ export function AccountPage() {
     if (pw.n1 !== pw.n2) return toast('Xác nhận mật khẩu không khớp', 'error');
 
     try {
-      try {
-        await authService.changePassword({
-          currentPassword: pw.old,
-          newPassword: pw.n1,
-          confirmPassword: pw.n2,
-        });
-      } catch (apiErr) {
-        const msg = (apiErr as Error).message || '';
-        if (msg.includes('không chính xác') || msg.includes('không đúng') || msg.includes('hết hạn')) {
-          toast(msg, 'error');
-          return;
-        }
-      }
-
-      act((d) => {
-        const u = d.users.find((x) => x.id === user?.id);
-        if (u) {
-          if (u.password !== pw.old) throw new Error('Mật khẩu hiện tại không đúng');
-          u.password = pw.n1;
-          setPw({ old: '', n1: '', n2: '' });
-        }
-      }, 'Đổi mật khẩu thành công');
+      await authService.changePassword({
+        currentPassword: pw.old,
+        newPassword: pw.n1,
+        confirmPassword: pw.n2,
+      });
+      setPw({ old: '', n1: '', n2: '' });
+      toast('Đổi mật khẩu thành công', 'success');
     } catch (e) {
       toast((e as Error).message, 'error');
     }
@@ -106,10 +82,7 @@ export function AccountPage() {
 
   return (
     <>
-      <PageHead
-        title={meta.title}
-        desc={meta.desc}
-      />
+      <PageHead title={meta.title} desc={meta.desc} />
 
       <div className="grid g3">
         <div className="card" style={{ textAlign: 'center' }}>
@@ -121,9 +94,9 @@ export function AccountPage() {
           <div className="mt16">
             <Badge color={roleLabel[user.role][1]}>{roleLabel[user.role][0]}</Badge>
           </div>
-          {branch && (
+          {user.branchName && (
             <div className="small muted mt12">
-              Chi nhánh làm việc: <b>{branch.name}</b>
+              Chi nhánh làm việc: <b>{user.branchName}</b>
             </div>
           )}
           {meta.duty && (
@@ -154,16 +127,16 @@ export function AccountPage() {
               <label>Vai trò hệ thống</label>
               <input className="input" value={roleLabel[user.role][0]} disabled />
             </div>
-            {branch && (
+            {user.branchName && (
               <div className="field full">
                 <label>Chi nhánh trực thuộc</label>
-                <input className="input" value={branch.name} disabled />
+                <input className="input" value={user.branchName} disabled />
               </div>
             )}
           </div>
           <div className="row mt16" style={{ justifyContent: 'flex-end' }}>
-            <button className="btn primary" onClick={saveProfile}>
-              <Save size={16} /> Lưu thay đổi
+            <button className="btn primary" onClick={saveProfile} disabled={saving}>
+              <Save size={16} /> {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
             </button>
           </div>
 

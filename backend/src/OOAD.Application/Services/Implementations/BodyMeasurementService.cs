@@ -89,6 +89,20 @@ public class BodyMeasurementService : IBodyMeasurementService
         return MapToDto(measurement);
     }
 
+    public async Task DeleteMeasurementAsync(Guid userId, Guid measurementId, CancellationToken cancellationToken = default)
+    {
+        var member = await _context.Members
+            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken)
+            ?? throw new NotFoundException("Không tìm thấy thông tin hội viên.");
+
+        var measurement = await _context.BodyMeasurements
+            .FirstOrDefaultAsync(m => m.Id == measurementId && m.MemberId == member.Id, cancellationToken)
+            ?? throw new NotFoundException("Không tìm thấy mốc đo chỉ số cơ thể.");
+
+        _context.BodyMeasurements.Remove(measurement);
+        await _context.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<IEnumerable<MetricTypeDto>> GetMetricTypesAsync(CancellationToken cancellationToken = default)
     {
         var list = await _context.MetricTypes
@@ -104,83 +118,6 @@ public class BodyMeasurementService : IBodyMeasurementService
             Unit = m.Unit,
             IsActive = m.IsActive
         });
-    }
-
-    public async Task<IEnumerable<NutritionPlanDto>> GetNutritionPlansAsync(Guid userId, CancellationToken cancellationToken = default)
-    {
-        var member = await _context.Members
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken);
-
-        if (member == null)
-            return Enumerable.Empty<NutritionPlanDto>();
-
-        var plans = await _context.NutritionPlans
-            .Where(p => p.MemberId == member.Id)
-            .OrderByDescending(p => p.CreatedAt)
-            .ToListAsync(cancellationToken);
-
-        return plans.Select(p => new NutritionPlanDto
-        {
-            Id = p.Id,
-            MemberId = p.MemberId,
-            TrainerName = "HLV Dinh Dưỡng OOAD",
-            Title = p.Goal,
-            TargetCalories = p.DailyCalories,
-            ProteinGrams = p.ProteinG,
-            CarbsGrams = p.CarbG,
-            FatGrams = p.FatG,
-            Content = p.MealSuggestion ?? p.DietaryNotes,
-            CreatedAt = p.CreatedAt
-        });
-    }
-
-    public async Task<NutritionPlanDto> CreateNutritionPlanAsync(Guid trainerUserId, CreateNutritionPlanRequest request, CancellationToken cancellationToken = default)
-    {
-        var trainer = await _context.Trainers
-            .Include(t => t.User)
-            .FirstOrDefaultAsync(t => t.UserId == trainerUserId, cancellationToken);
-
-        if (trainer == null)
-            throw new NotFoundException("Không tìm thấy thông tin HLV.");
-
-        var member = await _context.Members
-            .Include(m => m.User)
-            .FirstOrDefaultAsync(m => m.Id == request.MemberId, cancellationToken);
-
-        if (member == null)
-            throw new NotFoundException("Không tìm thấy thông tin hội viên.");
-
-        var plan = new NutritionPlan
-        {
-            MemberId = member.Id,
-            Goal = request.Title,
-            DailyCalories = request.TargetCalories,
-            ProteinG = request.ProteinGrams,
-            CarbG = request.CarbsGrams,
-            FatG = request.FatGrams,
-            MealSuggestion = request.Content,
-            DietaryNotes = "Tư vấn trực tiếp bởi HLV " + (trainer.User?.FullName ?? "chuyên nghiệp"),
-            CreatedAt = DateTime.UtcNow
-        };
-
-        _context.NutritionPlans.Add(plan);
-        await _context.SaveChangesAsync(cancellationToken);
-
-        return new NutritionPlanDto
-        {
-            Id = plan.Id,
-            MemberId = member.Id,
-            MemberName = member.User?.FullName,
-            CreatedByTrainerId = trainer.Id,
-            TrainerName = trainer.User?.FullName ?? "HLV OOAD",
-            Title = plan.Goal,
-            TargetCalories = plan.DailyCalories,
-            ProteinGrams = plan.ProteinG,
-            CarbsGrams = plan.CarbG,
-            FatGrams = plan.FatG,
-            Content = plan.MealSuggestion,
-            CreatedAt = plan.CreatedAt
-        };
     }
 
     private static BodyMeasurementDto MapToDto(BodyMeasurement m)

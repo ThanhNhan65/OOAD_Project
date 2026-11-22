@@ -3,52 +3,62 @@ import { Link } from 'react-router-dom';
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
 import { CalendarDays, Dumbbell, QrCode, Flame, Timer, CreditCard, ArrowRight, Sparkles, Activity, AlertTriangle } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
-import * as L from '../../store/logic';
+import type { MStatus } from '../../store/logic';
 import { Badge, StatCard, Empty, Progress } from '../../components/ui';
 import { mStatusLabel, cbLabel, ptbLabel } from '../../components/labels';
 import { fmtDate, fmtTime, diffDays, todayStr, fmtWeekday } from '../../utils';
 import { ptApi, type ApiPtBalanceDto, type ApiPtBookingDto } from '../../api/ptApi';
 import { bodyMeasurementsApi, type ApiBodyMeasurementDto } from '../../api/bodyMeasurementsApi';
+import { membershipPlansApi, type ApiMembershipDto } from '../../api/membershipPlansApi';
+import { bookingsApi, type ApiMyScheduleSummaryDto } from '../../api/bookingsApi';
+import { checkinsApi, type ApiCheckinDto } from '../../api/checkinsApi';
 
-export function useMemberData() {
-  const { db, user } = useApp();
-  return useMemo(() => {
-    const uid = user!.id;
-    const ms = db.memberships.filter((m) => m.memberId === uid).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    const current = L.membershipOn(db, uid);
-    const latest = L.latestPaidMembership(db, uid);
-    const balance = L.ptBalance(db, uid);
-    const now = Date.now();
-    const upcomingClass = db.classBookings
-      .filter((b) => b.memberId === uid && ['booked', 'waitlist'].includes(b.status))
-      .map((b) => ({ b, s: L.sessionById(db, b.sessionId)! }))
-      .filter((x) => x.s && new Date(x.s.startAt).getTime() > now)
-      .sort((a, b) => a.s.startAt.localeCompare(b.s.startAt));
-    const upcomingPT = db.ptBookings
-      .filter((b) => b.memberId === uid && ['pending', 'confirmed'].includes(b.status) && new Date(b.startAt).getTime() > now)
-      .sort((a, b) => a.startAt.localeCompare(b.startAt));
-    return { ms, current, latest, balance, upcomingClass, upcomingPT };
-  }, [db, user]);
+const EXPIRY_WARNING_DAYS = 7;
+
+function mapApiMembershipStatus(m: ApiMembershipDto): MStatus {
+  const s = (m.status || '').toLowerCase();
+  if (s === 'cancelled') return 'cancelled';
+  if (s === 'frozen') return 'frozen';
+  if (s === 'expired') return 'expired';
+  if (m.payStatus === 'pending_payment' || (s === 'pending' && m.payStatus !== 'paid')) {
+    return m.payStatus === 'paid' ? 'upcoming' : 'pending_payment';
+  }
+  const today = todayStr();
+  if (s === 'active') {
+    if (m.endDate.slice(0, 10) < today) return 'expired';
+    if (m.startDate.slice(0, 10) > today) return 'upcoming';
+    return 'active';
+  }
+  if (s === 'pending') return 'upcoming';
+  return 'expired';
 }
 
 export function MemberHome() {
-  const { db, user } = useApp();
-  const { current, latest, balance: localBalance, upcomingClass, upcomingPT: localUpcomingPT } = useMemberData();
+  const { user } = useApp();
 
+  const [memberships, setMemberships] = useState<ApiMembershipDto[]>([]);
   const [apiBalance, setApiBalance] = useState<ApiPtBalanceDto | null>(null);
-  const [apiPtBookings, setApiPtBookings] = useState<ApiPtBookingDto[] | null>(null);
-  const [apiMeasurements, setApiMeasurements] = useState<ApiBodyMeasurementDto[] | null>(null);
+  const [apiSchedule, setApiSchedule] = useState<ApiMyScheduleSummaryDto | null>(null);
+  const [apiPtBookings, setApiPtBookings] = useState<ApiPtBookingDto[]>([]);
+  const [apiCheckins, setApiCheckins] = useState<ApiCheckinDto[]>([]);
+  const [apiMeasurements, setApiMeasurements] = useState<ApiBodyMeasurementDto[]>([]);
 
   useEffect(() => {
     let mounted = true;
     Promise.allSettled([
+      membershipPlansApi.getMyMemberships(),
       ptApi.getPtBalance(),
+      bookingsApi.getMySchedule(),
       ptApi.getMyPtBookings(),
+      checkinsApi.getMyHistory(),
       bodyMeasurementsApi.getMyMeasurements(),
-    ]).then(([bRes, ptRes, mRes]) => {
+    ]).then(([msRes, bRes, schRes, ptRes, ckRes, mRes]) => {
       if (!mounted) return;
+      if (msRes.status === 'fulfilled') setMemberships(msRes.value);
       if (bRes.status === 'fulfilled') setApiBalance(bRes.value);
+      if (schRes.status === 'fulfilled') setApiSchedule(schRes.value);
       if (ptRes.status === 'fulfilled') setApiPtBookings(ptRes.value);
+      if (ckRes.status === 'fulfilled') setApiCheckins(ckRes.value);
       if (mRes.status === 'fulfilled') setApiMeasurements(mRes.value);
     });
     return () => {
@@ -56,76 +66,113 @@ export function MemberHome() {
     };
   }, []);
 
-  const plan = current ? L.planById(db, current.planId) : undefined;
-  const st = current ? L.membershipStatus(db, current) : latest ? L.membershipStatus(db, latest) : undefined;
-  const daysLeft = current ? diffDays(todayStr(), current.endDate) : 0;
-  const total = current ? diffDays(current.startDate, current.endDate) : 1;
+  const gymMemberships = useMemo(
+    () => memberships.filter((m) => (m.planType || 'MEMBERSHIP').toUpperCase() !== 'PT'),
+    [memberships],
+  );
 
-  // Use API metrics or local
-  const metrics = useMemo(() => {
-    if (apiMeasurements && apiMeasurements.length > 0) {
-      return apiMeasurements.map((m) => ({
-        date: m.measuredAt.slice(0, 10),
-        weight: Number(m.weight),
+  const { current, st } = useMemo(() => {
+    const activeOrFrozen = gymMemberships.find((m) => {
+      const mapped = mapApiMembershipStatus(m);
+      return mapped === 'active' || mapped === 'frozen';
+    });
+    if (activeOrFrozen) {
+      return { current: activeOrFrozen, st: mapApiMembershipStatus(activeOrFrozen) };
+    }
+    return { current: undefined, st: undefined };
+  }, [gymMemberships]);
+
+  const startYmd = current ? current.startDate.slice(0, 10) : '';
+  const endYmd = current ? current.endDate.slice(0, 10) : '';
+  const daysLeft = current ? Math.max(0, diffDays(todayStr(), endYmd)) : 0;
+  const total = current ? Math.max(1, diffDays(startYmd, endYmd)) : 1;
+  const scopeText = current
+    ? current.isAllBranches
+      ? 'Tất cả chi nhánh'
+      : current.branchName || 'Theo chi nhánh đã đăng ký'
+    : '';
+
+  const metrics = useMemo(
+    () =>
+      [...apiMeasurements]
+        .sort((a, b) => a.measuredAt.localeCompare(b.measuredAt))
+        .map((m) => ({
+          date: m.measuredAt.slice(0, 10),
+          weight: Number(m.weight),
+        })),
+    [apiMeasurements],
+  );
+
+  const monthCheckins = useMemo(() => {
+    const cutoff = Date.now() - 30 * 86400000;
+    return apiCheckins.filter((c) => new Date(c.checkInAt).getTime() > cutoff);
+  }, [apiCheckins]);
+
+  const minutes = useMemo(
+    () =>
+      monthCheckins.reduce((s, c) => {
+        if (typeof c.durationMinutes === 'number' && c.durationMinutes >= 0) return s + c.durationMinutes;
+        if (c.checkOutAt) {
+          return s + Math.max(0, (new Date(c.checkOutAt).getTime() - new Date(c.checkInAt).getTime()) / 60000);
+        }
+        return s;
+      }, 0),
+    [monthCheckins],
+  );
+
+  const attended = useMemo(() => {
+    const classAttended = (apiSchedule?.bookings ?? []).filter(
+      (b) => b.type !== 'PersonalTrainer' && b.status.toLowerCase() === 'attended',
+    ).length;
+    const ptAttended = apiPtBookings.filter((b) =>
+      ['attended', 'completed'].includes(b.status.toLowerCase()),
+    ).length;
+    return classAttended + ptAttended;
+  }, [apiSchedule, apiPtBookings]);
+
+  const events = useMemo(() => {
+    const now = Date.now();
+    const classEvents = (apiSchedule?.bookings ?? [])
+      .filter(
+        (b) =>
+          b.type !== 'PersonalTrainer' &&
+          ['booked', 'confirmed'].includes(b.status.toLowerCase()) &&
+          new Date(b.startAt).getTime() > now,
+      )
+      .map((b) => ({
+        at: b.startAt,
+        title: b.title,
+        sub: `${b.room} · ${b.branchName}`,
+        badge: cbLabel[b.status.toLowerCase() as keyof typeof cbLabel] || cbLabel.booked,
+        color: b.color || '#7c5cff',
       }));
-    }
-    return db.bodyMetrics
-      .filter((m) => m.memberId === user!.id)
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map((m) => ({ date: m.date, weight: m.weight }));
-  }, [apiMeasurements, db.bodyMetrics, user]);
 
-  const monthCheckins = db.checkins.filter(
-    (c) => c.memberId === user!.id && c.result === 'success' && new Date(c.checkInAt).getTime() > Date.now() - 30 * 86400000,
-  );
-  const minutes = monthCheckins.reduce(
-    (s, c) => s + (c.checkOutAt ? (new Date(c.checkOutAt).getTime() - new Date(c.checkInAt).getTime()) / 60000 : 0),
-    0,
-  );
-  const attended =
-    db.classBookings.filter((b) => b.memberId === user!.id && b.status === 'attended').length +
-    db.ptBookings.filter((b) => b.memberId === user!.id && b.status === 'completed').length;
+    const waitlistEvents = (apiSchedule?.waitlistEntries ?? [])
+      .filter((w) => ['waiting', 'waitlist'].includes(w.status.toLowerCase()) && new Date(w.startAt).getTime() > now)
+      .map((w) => ({
+        at: w.startAt,
+        title: w.className,
+        sub: `${w.room} · ${w.branchName} · Hàng chờ #${w.position}`,
+        badge: cbLabel.waitlist,
+        color: w.color || '#ffb020',
+      }));
 
-  const now = Date.now();
-  const upcomingPtEvents = useMemo(() => {
-    if (apiPtBookings && apiPtBookings.length > 0) {
-      return apiPtBookings
-        .filter((b) => ['PENDING', 'CONFIRMED'].includes(b.status) && new Date(b.startAt).getTime() > now)
-        .map((b) => ({
-          at: b.startAt,
-          title: `PT 1-kèm-1 · ${b.trainerName}`,
-          sub: b.branchName,
-          badge: ptbLabel[b.status.toLowerCase() as keyof typeof ptbLabel] || ['Đã đặt', 'blue'],
-          color: '#00d1b2',
-        }));
-    }
-    return localUpcomingPT.map((b) => ({
-      at: b.startAt,
-      title: `PT 1-kèm-1 · ${L.userById(db, b.trainerId)?.fullName}`,
-      sub: L.branchById(db, b.branchId)?.name ?? '',
-      badge: ptbLabel[b.status],
-      color: '#00d1b2',
-    }));
-  }, [apiPtBookings, localUpcomingPT, now, db]);
+    const ptEvents = apiPtBookings
+      .filter((b) => ['pending', 'confirmed'].includes(b.status.toLowerCase()) && new Date(b.startAt).getTime() > now)
+      .map((b) => ({
+        at: b.startAt,
+        title: `PT 1-kèm-1 · ${b.trainerName}`,
+        sub: b.branchName,
+        badge: ptbLabel[b.status.toLowerCase() as keyof typeof ptbLabel] || ['Đã đặt', 'blue'],
+        color: '#00d1b2',
+      }));
 
-  const events = [
-    ...upcomingClass.map(({ b, s }) => {
-      const c = L.classById(db, s.classId)!;
-      return {
-        at: s.startAt,
-        title: c.name,
-        sub: `${s.room} · ${L.branchById(db, c.branchId)?.name}`,
-        badge: cbLabel[b.status],
-        color: c.color,
-      };
-    }),
-    ...upcomingPtEvents,
-  ].sort((a, b) => a.at.localeCompare(b.at));
+    return [...classEvents, ...waitlistEvents, ...ptEvents].sort((a, b) => a.at.localeCompare(b.at));
+  }, [apiSchedule, apiPtBookings]);
 
-  // Balance values
-  const totalBalance = apiBalance ? apiBalance.total : localBalance.total;
-  const freeBalance = apiBalance ? apiBalance.freeSessions : localBalance.free;
-  const pkgBalance = apiBalance ? apiBalance.packageSessions : localBalance.pkg;
+  const totalBalance = apiBalance ? apiBalance.total : 0;
+  const freeBalance = apiBalance ? apiBalance.freeSessions : 0;
+  const pkgBalance = apiBalance ? apiBalance.packageSessions : 0;
 
   return (
     <>
@@ -134,11 +181,11 @@ export function MemberHome() {
           <div>
             <div className="row"><Sparkles size={18} color="#ff8fb0" /><span className="muted">Xin chào,</span></div>
             <h1 style={{ fontSize: 30, marginTop: 4 }}>{user!.fullName} 👋</h1>
-            {current && plan ? (
+            {current && st ? (
               <div className="row wrap mt8">
-                <Badge color="pink">{plan.name}</Badge>
-                <Badge color={mStatusLabel[st!][1]}>{mStatusLabel[st!][0]}</Badge>
-                <span className="muted small">Hiệu lực đến {fmtDate(current.endDate)} · {L.scopeLabel(db, plan.branchScope)}</span>
+                <Badge color="pink">{current.planName}</Badge>
+                <Badge color={mStatusLabel[st][1]}>{mStatusLabel[st][0]}</Badge>
+                <span className="muted small">Hiệu lực đến {fmtDate(endYmd)} · {scopeText}</span>
               </div>
             ) : (
               <p className="muted mt8">Bạn chưa có gói hội viên còn hiệu lực. Chọn gói để bắt đầu tập luyện!</p>
@@ -156,10 +203,10 @@ export function MemberHome() {
               <span className="muted">Thời hạn gói</span>
               <span className="bold">Còn {daysLeft} ngày</span>
             </div>
-            <Progress value={100 - (daysLeft / total) * 100} />
+            <Progress value={Math.max(0, Math.min(100, 100 - (daysLeft / total) * 100))} />
           </div>
         )}
-        {current && daysLeft <= db.settings.expiryWarningDays && (
+        {current && daysLeft <= EXPIRY_WARNING_DAYS && (
           <div className="row mt16" style={{ color: '#ffc857' }}>
             <AlertTriangle size={16} /> Gói sắp hết hạn – <Link to="/member/memberships" className="bold" style={{ textDecoration: 'underline' }}>gia hạn ngay</Link>
           </div>

@@ -1,4 +1,5 @@
 using System.Data;
+using OOAD.Application.Common.Options;
 using OOAD.Application.DTOs;
 using OOAD.Application.Services.Interfaces;
 using OOAD.Domain.Entities;
@@ -17,7 +18,7 @@ public class ClassBookingService : IClassBookingService
     private readonly IMembershipRepository _membershipRepository;
     private readonly IReviewRepository _reviewRepository;
     private readonly INotificationRepository _notificationRepository;
-    private readonly ISystemSettingRepository _systemSettingRepository;
+    private readonly BusinessRuleOptions _ruleOptions;
     private readonly IUnitOfWork _unitOfWork;
 
     public ClassBookingService(
@@ -28,7 +29,7 @@ public class ClassBookingService : IClassBookingService
         IMembershipRepository membershipRepository,
         IReviewRepository reviewRepository,
         INotificationRepository notificationRepository,
-        ISystemSettingRepository systemSettingRepository,
+        BusinessRuleOptions ruleOptions,
         IUnitOfWork unitOfWork)
     {
         _classSessionRepository = classSessionRepository;
@@ -38,19 +39,23 @@ public class ClassBookingService : IClassBookingService
         _membershipRepository = membershipRepository;
         _reviewRepository = reviewRepository;
         _notificationRepository = notificationRepository;
-        _systemSettingRepository = systemSettingRepository;
+        _ruleOptions = ruleOptions;
         _unitOfWork = unitOfWork;
     }
+
+    private int GetWaitlistCutoffHours() =>
+        _ruleOptions.WaitlistCutoffHours > 0 ? _ruleOptions.WaitlistCutoffHours : 8;
+
+    private int GetCancelDeadlineHours() =>
+        _ruleOptions.CancelDeadlineHours > 0 ? _ruleOptions.CancelDeadlineHours : 4;
 
     public async Task<RegisterClassResponseDto> RegisterClassSessionAsync(
         Guid classSessionId,
         Guid currentUserId,
         CancellationToken cancellationToken = default)
     {
-        var waitlistCutoffHours = await _systemSettingRepository.GetIntSettingAsync(
-            "WAITLIST_CUTOFF_HOURS", 8, null, cancellationToken);
-        var cancelDeadlineHours = await _systemSettingRepository.GetIntSettingAsync(
-            "CANCEL_BOOKING_MIN_HOURS", 2, null, cancellationToken);
+        var waitlistCutoffHours = GetWaitlistCutoffHours();
+        var cancelDeadlineHours = GetCancelDeadlineHours();
 
         return await _unitOfWork.ExecuteInTransactionAsync(async ct =>
         {
@@ -220,10 +225,8 @@ public class ClassBookingService : IClassBookingService
         Guid currentUserId,
         CancellationToken cancellationToken = default)
     {
-        var cancelDeadlineHours = await _systemSettingRepository.GetIntSettingAsync(
-            "CANCEL_BOOKING_MIN_HOURS", 2, null, cancellationToken);
-        var waitlistCutoffHours = await _systemSettingRepository.GetIntSettingAsync(
-            "WAITLIST_CUTOFF_HOURS", 8, null, cancellationToken);
+        var cancelDeadlineHours = GetCancelDeadlineHours();
+        var waitlistCutoffHours = GetWaitlistCutoffHours();
 
         return await _unitOfWork.ExecuteInTransactionAsync(async ct =>
         {
@@ -329,8 +332,7 @@ public class ClassBookingService : IClassBookingService
 
     public async Task<int> ProcessWaitlistCutoffAsync(CancellationToken cancellationToken = default)
     {
-        var waitlistCutoffHours = await _systemSettingRepository.GetIntSettingAsync(
-            "WAITLIST_CUTOFF_HOURS", 8, null, cancellationToken);
+        var waitlistCutoffHours = GetWaitlistCutoffHours();
         var thresholdUtc = DateTime.UtcNow.AddHours(waitlistCutoffHours);
 
         var overdueSessions = await _classSessionRepository
@@ -376,10 +378,8 @@ public class ClassBookingService : IClassBookingService
     {
         await ProcessWaitlistCutoffAsync(cancellationToken);
 
-        var cancelDeadlineHours = await _systemSettingRepository.GetIntSettingAsync(
-            "CANCEL_BOOKING_MIN_HOURS", 2, null, cancellationToken);
-        var waitlistCutoffHours = await _systemSettingRepository.GetIntSettingAsync(
-            "WAITLIST_CUTOFF_HOURS", 8, null, cancellationToken);
+        var cancelDeadlineHours = GetCancelDeadlineHours();
+        var waitlistCutoffHours = GetWaitlistCutoffHours();
 
         var member = await _memberRepository.GetByUserIdAsync(currentUserId, cancellationToken);
         if (member == null)
@@ -471,8 +471,7 @@ public class ClassBookingService : IClassBookingService
         Guid currentUserId,
         CancellationToken cancellationToken = default)
     {
-        var cancelDeadlineHours = await _systemSettingRepository.GetIntSettingAsync(
-            "CANCEL_BOOKING_MIN_HOURS", 2, null, cancellationToken);
+        var cancelDeadlineHours = GetCancelDeadlineHours();
 
         var member = await _memberRepository.GetByUserIdAsync(currentUserId, cancellationToken);
         if (member == null) return [];

@@ -68,6 +68,26 @@ export const methodLabel: Record<PaymentMethod, string> = {
   banking: 'Internet Banking',
 };
 
+export function formatPaymentMethod(method?: string | null): string {
+  if (!method) return 'Ví ZaloPay';
+  const key = method.trim().toLowerCase();
+  switch (key) {
+    case 'zalopay':
+      return 'Ví ZaloPay';
+    case 'vnpay':
+      return 'VNPay QR';
+    case 'card':
+      return 'Thẻ Visa/Master';
+    case 'banking':
+    case 'transfer':
+      return 'Chuyển khoản / Banking';
+    case 'cash':
+      return 'Tiền mặt';
+    default:
+      return method;
+  }
+}
+
 export const cardStatusMeta: Record<CardStatus, { label: string; color: 'green' | 'amber' | 'red'; desc: string }> = {
   ACTIVE: {
     label: 'Đang hoạt động (ACTIVE)',

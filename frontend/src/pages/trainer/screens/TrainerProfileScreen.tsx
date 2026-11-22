@@ -3,11 +3,13 @@ import { Award, Save, RefreshCw } from 'lucide-react';
 import { useApp } from '../../../store/AppContext';
 import { Avatar, Badge, PageHead } from '../../../components/ui';
 import { trainerService } from '../../../services/trainer.service';
-import { isApiNetworkError } from '../../../api/apiClient';
+import { branchesApi, type BranchApiDto } from '../../../api/branchesApi';
+import { userService } from '../../../api/user.service';
 
 export function TrainerProfileScreen() {
-  const { db, user, act, toast } = useApp();
-  const t = user!.trainer!;
+  const { user, updateCurrentUser, toast } = useApp();
+  const t = user!.trainer;
+  const [branchesList, setBranchesList] = useState<BranchApiDto[]>([]);
   const [f, setF] = useState({
     fullName: user!.fullName,
     phone: user!.phone || '',
@@ -15,7 +17,7 @@ export function TrainerProfileScreen() {
     exp: t?.experienceYears || 1,
     spec: t?.specialties?.join(', ') || '',
     cert: t?.certifications?.join(', ') || '',
-    branches: t?.branchIds || []
+    branches: t?.branchIds || (user!.branchId ? [user!.branchId] : []),
   });
   const [loading, setLoading] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
@@ -23,26 +25,28 @@ export function TrainerProfileScreen() {
   const fetchProfile = useCallback(async () => {
     setLoading(true);
     try {
-      const p = await trainerService.getMyProfile();
+      const [p, bList] = await Promise.all([
+        trainerService.getMyProfile(),
+        branchesApi.getAll().catch(() => [] as BranchApiDto[]),
+      ]);
+      setBranchesList(bList);
       if (p) {
         setF((prev) => ({
           ...prev,
           fullName: p.fullName || prev.fullName,
           phone: p.phone || prev.phone,
           bio: p.bio || prev.bio,
-          exp: p.experienceYears || prev.exp,
+          exp: p.experienceYears ?? prev.exp,
           spec: p.specialty || prev.spec,
-          branches: p.branchId ? [p.branchId] : prev.branches,
+          branches: p.branchId ? [p.branchId] : prev.branches.length ? prev.branches : bList[0]?.id ? [bList[0].id] : [],
         }));
       }
     } catch (err) {
-      if (!isApiNetworkError(err)) {
-        console.warn('Lỗi tải hồ sơ HLV từ API:', err);
-      }
+      toast((err as Error).message || 'Không thể tải hồ sơ HLV từ máy chủ', 'error');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     fetchProfile();
@@ -50,34 +54,48 @@ export function TrainerProfileScreen() {
 
   const save = async () => {
     if (!f.branches.length) {
-      toast('Chọn ít nhất một chi nhánh làm việc', 'error');
+      toast('Chọn một chi nhánh làm việc', 'error');
       return;
     }
 
     setSaving(true);
     try {
-      await trainerService.updateMyProfile({
-        specialty: f.spec,
-        experienceYears: +f.exp,
-        bio: f.bio,
-        phone: f.phone,
+      const trimmedName = f.fullName.trim();
+      const trimmedPhone = f.phone.trim();
+      await Promise.all([
+        trainerService.updateMyProfile({
+          specialty: f.spec,
+          experienceYears: +f.exp,
+          bio: f.bio,
+          phone: trimmedPhone,
+          branchId: f.branches[0],
+        }),
+        userService.updateMe({
+          fullName: trimmedName || user!.fullName,
+          phone: trimmedPhone,
+          specialty: f.spec,
+          experienceYears: +f.exp,
+          bio: f.bio,
+        }),
+      ]);
+
+      const branchObj = branchesList.find((b) => b.id === f.branches[0]);
+      updateCurrentUser({
+        fullName: trimmedName || user!.fullName,
+        phone: trimmedPhone,
         branchId: f.branches[0],
-      });
-      toast('Đã cập nhật hồ sơ chuyên môn trên hệ thống API', 'success');
-    } catch {
-      // Fallback local
-      act((d) => {
-        const u = d.users.find((x) => x.id === user!.id)!;
-        u.fullName = f.fullName;
-        u.phone = f.phone;
-        u.trainer = {
+        branchName: branchObj?.name ?? user!.branchName,
+        trainer: {
           bio: f.bio,
           experienceYears: +f.exp,
           specialties: f.spec.split(',').map((x) => x.trim()).filter(Boolean),
           certifications: f.cert.split(',').map((x) => x.trim()).filter(Boolean),
-          branchIds: f.branches
-        };
-      }, 'Đã cập nhật hồ sơ chuyên môn');
+          branchIds: f.branches,
+        },
+      });
+      toast('Đã cập nhật hồ sơ chuyên môn', 'success');
+    } catch (err) {
+      toast((err as Error).message || 'Cập nhật hồ sơ thất bại', 'error');
     } finally {
       setSaving(false);
     }
@@ -139,18 +157,12 @@ export function TrainerProfileScreen() {
             <div className="field full">
               <label>Chi nhánh làm việc</label>
               <div className="chips">
-                {db.branches.map((b) => (
+                {branchesList.map((b) => (
                   <button
                     key={b.id}
+                    type="button"
                     className={`chip ${f.branches.includes(b.id) ? 'on' : ''}`}
-                    onClick={() =>
-                      setF({
-                        ...f,
-                        branches: f.branches.includes(b.id)
-                          ? f.branches.filter((x) => x !== b.id)
-                          : [...f.branches, b.id],
-                      })
-                    }
+                    onClick={() => setF({ ...f, branches: [b.id] })}
                   >
                     {b.name}
                   </button>

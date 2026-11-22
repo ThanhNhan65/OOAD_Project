@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, Navigate } from 'react-router-dom';
 import { Mail, Lock, User as UserIcon, Phone, Zap, ArrowRight, ScanLine, Dumbbell, CalendarCheck, TrendingUp } from 'lucide-react';
-import { useApp } from '../store/AppContext';
-import * as L from '../store/logic';
+import { useApp, mapApiUserToAppUser } from '../store/AppContext';
 import { homeOf } from '../components/Layout';
 import { Badge } from '../components/ui';
-import { authService, type ApiUserDto } from '../api/auth.service';
+import { authService } from '../api/auth.service';
 import { branchesApi } from '../api/branchesApi';
 import { isApiNetworkError } from '../api/apiClient';
-import type { User } from '../types';
 import hero from '../assets/gym-hero.jpg';
 
 function Hero() {
@@ -40,69 +38,37 @@ function Hero() {
   );
 }
 
-function mapApiUserToLocalUser(apiUser: ApiUserDto, existing?: User): User {
-  return {
-    id: existing?.id ?? apiUser.id,
-    role: apiUser.role,
-    email: apiUser.email,
-    password: existing?.password ?? '',
-    fullName: apiUser.fullName,
-    phone: apiUser.phone ?? existing?.phone ?? '',
-    gender: (apiUser.gender as User['gender']) || existing?.gender || 'male',
-    dob: apiUser.dateOfBirth ? apiUser.dateOfBirth.slice(0, 10) : (existing?.dob ?? '1998-01-01'),
-    address: apiUser.address ?? existing?.address ?? '',
-    avatarColor: existing?.avatarColor ?? '#7c5cff',
-    locked: apiUser.locked || apiUser.status === 'LOCKED',
-    createdAt: apiUser.createdAt || existing?.createdAt || new Date().toISOString(),
-    branchId: existing?.branchId ?? apiUser.branchId,
-    cardCode: apiUser.cardCode ?? existing?.cardCode,
-    cardStatus: existing?.cardStatus ?? 'ACTIVE',
-    trainer: existing?.trainer ?? (apiUser.role === 'trainer' ? {
-      specialties: (apiUser.specialty || 'Gym, Fitness').split(',').map((s) => s.trim()).filter(Boolean),
-      experienceYears: apiUser.experienceYears ?? 0,
-      certifications: ['HLV DFGymCenter'],
-      bio: apiUser.bio ?? '',
-      branchIds: apiUser.branchId ? [apiUser.branchId] : [],
-    } : undefined),
-  };
-}
-
 export function Login() {
-  const { db, user, login, toast } = useApp();
+  const { user, login, toast } = useApp();
   const nav = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
   if (user) return <Navigate to={homeOf(user.role)} replace />;
+
   const submit = async (e?: React.FormEvent, em = email, pw = password) => {
     e?.preventDefault();
     if (submitting) return;
     setSubmitting(true);
     try {
       const res = await authService.login({ email: em.trim(), password: pw });
-      localStorage.setItem('ooad_api_user', JSON.stringify(res.user));
-      const existing = db.users.find((x) => x.email.toLowerCase() === res.user.email.toLowerCase());
-      const mapped = mapApiUserToLocalUser(res.user, existing);
+      const mapped = mapApiUserToAppUser(res.user);
       login(mapped);
       toast(`Xin chào, ${mapped.fullName}!`);
       nav(homeOf(mapped.role));
     } catch (err) {
-      if (isApiNetworkError(err)) {
-        try {
-          const u = L.login(db, em, pw);
-          login(u);
-          toast(`Xin chào, ${u.fullName}! (Chế độ offline)`);
-          nav(homeOf(u.role));
-        } catch (localErr) {
-          toast((localErr as Error).message, 'error');
-        }
-      } else {
-        toast((err as Error).message, 'error');
-      }
+      toast(
+        isApiNetworkError(err)
+          ? 'Không thể kết nối tới máy chủ Backend API. Vui lòng khởi động API.'
+          : (err as Error).message,
+        'error',
+      );
     } finally {
       setSubmitting(false);
     }
   };
+
   return (
     <div className="auth-wrap">
       <Hero />
@@ -119,7 +85,9 @@ export function Login() {
               <label>Mật khẩu</label>
               <div className="input-icon"><Lock size={17} /><input id="login-password" className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••" required /></div>
             </div>
-            <button className="btn primary lg block mt8" id="login-submit">Đăng nhập <ArrowRight size={18} /></button>
+            <button className="btn primary lg block mt8" id="login-submit" disabled={submitting}>
+              {submitting ? 'Đang đăng nhập...' : <>Đăng nhập <ArrowRight size={18} /></>}
+            </button>
           </form>
           <p className="muted mt16" style={{ textAlign: 'center' }}>
             Chưa có tài khoản? <Link to="/register" className="grad-text bold" id="go-register">Đăng ký tài khoản mới</Link>
@@ -133,14 +101,13 @@ export function Login() {
 }
 
 export function Register() {
-  const { db, user, act, login, toast } = useApp();
+  const { user, login, toast } = useApp();
   const nav = useNavigate();
-  const [branchOptions, setBranchOptions] = useState<{ id: string; name: string }[]>(() =>
-    db.branches.map((b) => ({ id: b.id, name: b.name })),
-  );
+  const [branchOptions, setBranchOptions] = useState<{ id: string; name: string }[]>([]);
+  const [submitting, setSubmitting] = useState(false);
   const [f, setF] = useState({
     role: 'member' as 'member' | 'trainer',
-    branchId: db.branches[0]?.id || '',
+    branchId: '',
     specialty: 'Gym, HIIT, Cardio',
     experienceYears: 2,
     fullName: '',
@@ -165,17 +132,19 @@ export function Register() {
         }
       })
       .catch(() => {
-        /* giữ fallback danh sách chi nhánh cục bộ khi offline */
+        toast('Không tải được danh sách chi nhánh từ máy chủ Backend API.', 'error');
       });
-  }, []);
+  }, [toast]);
 
   if (user) return <Navigate to={homeOf(user.role)} replace />;
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setF({ ...f, [k]: k === 'experienceYears' ? +e.target.value : e.target.value });
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (f.password !== f.confirm) return toast('Mật khẩu xác nhận không khớp', 'error');
     if (f.role === 'trainer' && !f.branchId) return toast('Huấn luyện viên bắt buộc phải chọn Chi nhánh!', 'error');
+    setSubmitting(true);
     try {
       const res = await authService.register({
         email: f.email.trim(),
@@ -189,23 +158,22 @@ export function Register() {
         specialty: f.role === 'trainer' ? f.specialty : undefined,
         experienceYears: f.role === 'trainer' ? f.experienceYears : undefined,
       });
-      localStorage.setItem('ooad_api_user', JSON.stringify(res.user));
-      const mapped = mapApiUserToLocalUser(res.user);
+      const mapped = mapApiUserToAppUser(res.user);
       login(mapped);
       toast('Đăng ký thành công!');
       nav(mapped.role === 'trainer' ? '/trainer/profile' : '/member/profile');
     } catch (err) {
-      if (isApiNetworkError(err)) {
-        const u = act((d) => L.register(d, f), 'Đăng ký thành công!');
-        if (u) {
-          login(u);
-          nav(u.role === 'trainer' ? '/trainer/profile' : '/member/profile');
-        }
-      } else {
-        toast((err as Error).message, 'error');
-      }
+      toast(
+        isApiNetworkError(err)
+          ? 'Không thể kết nối tới máy chủ Backend API. Vui lòng khởi động API.'
+          : (err as Error).message,
+        'error',
+      );
+    } finally {
+      setSubmitting(false);
     }
   };
+
   return (
     <div className="auth-wrap">
       <Hero />
@@ -267,8 +235,8 @@ export function Register() {
             <div className="field"><label>Mật khẩu</label><input id="reg-password" type="password" className="input" value={f.password} onChange={set('password')} required minLength={6} placeholder="Tối thiểu 6 ký tự" /></div>
             <div className="field"><label>Xác nhận mật khẩu</label><input id="reg-confirm" type="password" className="input" value={f.confirm} onChange={set('confirm')} required placeholder="Nhập lại mật khẩu" /></div>
           </div>
-          <button className="btn primary lg block mt24" id="reg-submit">
-            {f.role === 'trainer' ? 'Đăng ký Huấn luyện viên' : 'Đăng ký Hội viên'} <ArrowRight size={18} />
+          <button className="btn primary lg block mt24" id="reg-submit" disabled={submitting}>
+            {submitting ? 'Đang đăng ký...' : <>{f.role === 'trainer' ? 'Đăng ký Huấn luyện viên' : 'Đăng ký Hội viên'} <ArrowRight size={18} /></>}
           </button>
           <p className="muted mt16" style={{ textAlign: 'center' }}>Đã có tài khoản? <Link to="/login" className="grad-text bold">Đăng nhập</Link></p>
         </form>

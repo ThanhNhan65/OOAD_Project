@@ -1,3 +1,4 @@
+using OOAD.Application.Common.Options;
 using OOAD.Application.DTOs;
 using OOAD.Application.Services.Interfaces;
 using OOAD.Domain.Entities;
@@ -19,7 +20,7 @@ public class GymClassService : IGymClassService
     private readonly ITrainerAvailabilityRepository _trainerAvailabilityRepository;
     private readonly IMemberRepository _memberRepository;
     private readonly INotificationRepository _notificationRepository;
-    private readonly ISystemSettingRepository _systemSettingRepository;
+    private readonly BusinessRuleOptions _ruleOptions;
     private readonly IClassBookingService _classBookingService;
     private readonly IUnitOfWork _unitOfWork;
 
@@ -34,7 +35,7 @@ public class GymClassService : IGymClassService
         ITrainerAvailabilityRepository trainerAvailabilityRepository,
         IMemberRepository memberRepository,
         INotificationRepository notificationRepository,
-        ISystemSettingRepository systemSettingRepository,
+        BusinessRuleOptions ruleOptions,
         IClassBookingService classBookingService,
         IUnitOfWork unitOfWork)
     {
@@ -48,10 +49,16 @@ public class GymClassService : IGymClassService
         _trainerAvailabilityRepository = trainerAvailabilityRepository;
         _memberRepository = memberRepository;
         _notificationRepository = notificationRepository;
-        _systemSettingRepository = systemSettingRepository;
+        _ruleOptions = ruleOptions;
         _classBookingService = classBookingService;
         _unitOfWork = unitOfWork;
     }
+
+    private int GetWaitlistCutoffHours() =>
+        _ruleOptions.WaitlistCutoffHours > 0 ? _ruleOptions.WaitlistCutoffHours : 8;
+
+    private int GetCancelDeadlineHours() =>
+        _ruleOptions.CancelDeadlineHours > 0 ? _ruleOptions.CancelDeadlineHours : 4;
 
     public async Task<IReadOnlyList<GymClassDto>> GetAllClassesAsync(
         Guid? branchId = null,
@@ -295,8 +302,7 @@ public class GymClassService : IGymClassService
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var waitlistCutoffHours = await _systemSettingRepository.GetIntSettingAsync(
-            "WAITLIST_CUTOFF_HOURS", 8, null, cancellationToken);
+        var waitlistCutoffHours = GetWaitlistCutoffHours();
 
         var result = new List<ClassSessionDto>();
         foreach (var s in createdSessions)
@@ -321,8 +327,7 @@ public class GymClassService : IGymClassService
     {
         await _classBookingService.ProcessWaitlistCutoffAsync(cancellationToken);
 
-        var waitlistCutoffHours = await _systemSettingRepository.GetIntSettingAsync(
-            "WAITLIST_CUTOFF_HOURS", 8, null, cancellationToken);
+        var waitlistCutoffHours = GetWaitlistCutoffHours();
 
         Guid? currentMemberId = null;
         if (currentUserId.HasValue)
@@ -354,10 +359,8 @@ public class GymClassService : IGymClassService
             currentMemberId = member?.Id;
         }
 
-        var cancelDeadlineHours = await _systemSettingRepository.GetIntSettingAsync(
-            "CANCEL_BOOKING_MIN_HOURS", 2, null, cancellationToken);
-        var waitlistCutoffHours = await _systemSettingRepository.GetIntSettingAsync(
-            "WAITLIST_CUTOFF_HOURS", 8, null, cancellationToken);
+        var cancelDeadlineHours = GetCancelDeadlineHours();
+        var waitlistCutoffHours = GetWaitlistCutoffHours();
 
         var baseDto = MapSessionDto(session, currentMemberId, waitlistCutoffHours);
 

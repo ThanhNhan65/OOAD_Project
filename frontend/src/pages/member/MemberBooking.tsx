@@ -31,8 +31,9 @@ import { cbLabel, ptbLabel } from '../../components/labels';
 import { addDays, todayStr, fmtTime, fmtDate, WEEKDAYS, parseDate, fmtDateTime, hoursUntil, fmtWeekday, toDateStr, atTime } from '../../utils';
 import { classesApi, type ApiClassSessionDetailDto, type ApiClassSessionDto } from '../../api/classesApi';
 import { bookingsApi, type ApiMyScheduleSummaryDto } from '../../api/bookingsApi';
-import { branchesApi } from '../../api/branchesApi';
+import { branchesApi, type BranchApiDto } from '../../api/branchesApi';
 import { ptApi, type ApiPtBalanceDto } from '../../api/ptApi';
+import { trainerService, type TrainerAvailabilityItem, type TrainerItem } from '../../services/trainer.service';
 import { getAuthToken, isApiNetworkError } from '../../api/apiClient';
 
 type PeriodKey = 'morning' | 'afternoon' | 'evening';
@@ -944,12 +945,19 @@ const PT_GOAL_SUGGESTIONS = [
 
 export function MemberPT() {
   const { db, user, act, toast } = useApp();
-  const allTrainers = db.users.filter((u) => u.role === 'trainer' && !u.locked);
+  const localTrainers = db.users.filter((u) => u.role === 'trainer' && !u.locked);
+
+  const [apiMode, setApiMode] = useState<boolean>(true);
+  const [apiTrainers, setApiTrainers] = useState<TrainerItem[]>([]);
+  const [apiBranches, setApiBranches] = useState<BranchApiDto[]>([]);
+  const [apiTrainerSlots, setApiTrainerSlots] = useState<TrainerAvailabilityItem[]>([]);
+  const [loadingSlots, setLoadingSlots] = useState<boolean>(false);
+  const [bookingBusy, setBookingBusy] = useState<boolean>(false);
 
   const [searchTrainer, setSearchTrainer] = useState('');
   const [selectedSpecialty, setSelectedSpecialty] = useState('all');
   const [selectedBranch, setSelectedBranch] = useState('all');
-  const [tid, setTid] = useState(allTrainers[0]?.id);
+  const [tid, setTid] = useState<string>(localTrainers[0]?.id ?? '');
   const [slot, setSlot] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [timeOfDay, setTimeOfDay] = useState<'all' | 'morning' | 'afternoon' | 'evening'>('all');
@@ -957,51 +965,130 @@ export function MemberPT() {
   const [apiBalance, setApiBalance] = useState<ApiPtBalanceDto | null>(null);
 
   useEffect(() => {
-    ptApi.getPtBalance().then(setApiBalance).catch(() => {});
-  }, []);
+    let cancelled = false;
+    Promise.all([
+      trainerService.getAllTrainers(),
+      branchesApi.getAll().catch(() => [] as BranchApiDto[]),
+      getAuthToken() ? ptApi.getPtBalance().catch(() => null) : Promise.resolve(null),
+    ])
+      .then(([trList, brList, balRes]) => {
+        if (cancelled) return;
+        setApiTrainers(trList);
+        setApiBranches(brList);
+        if (balRes) setApiBalance(balRes);
+        if (trList.length > 0) {
+          setTid((prev) => (trList.some((x) => x.id === prev) ? prev : trList[0].id));
+        }
+        setApiMode(true);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (isApiNetworkError(err)) setApiMode(false);
+        else toast((err as Error).message, 'error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [toast]);
+
+  const loadTrainerSlots = useCallback(async (trainerId: string) => {
+    if (!apiMode || !trainerId) return;
+    setLoadingSlots(true);
+    try {
+      const slots = await trainerService.getAvailability(trainerId);
+      setApiTrainerSlots(slots);
+    } catch (err) {
+      if (!isApiNetworkError(err)) toast((err as Error).message, 'error');
+    } finally {
+      setLoadingSlots(false);
+    }
+  }, [apiMode, toast]);
+
+  useEffect(() => {
+    if (apiMode && tid && apiTrainers.some((x) => x.id === tid)) {
+      loadTrainerSlots(tid);
+    }
+  }, [apiMode, tid, apiTrainers, loadTrainerSlots]);
 
   const localBal = L.ptBalance(db, user!.id);
   const bal = apiBalance
     ? { total: apiBalance.total, free: apiBalance.freeSessions, pkg: apiBalance.packageSessions }
     : localBal;
-  const tr = L.userById(db, tid);
   const now = Date.now();
 
   const specialties = useMemo(() => {
     const set = new Set<string>();
-    allTrainers.forEach((t) => t.trainer?.specialties.forEach((s) => set.add(s)));
+    if (apiMode) {
+      apiTrainers.forEach((t) =>
+        (t.specialty || '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .forEach((s) => set.add(s)),
+      );
+    } else {
+      localTrainers.forEach((t) => t.trainer?.specialties.forEach((s) => set.add(s)));
+    }
     return Array.from(set);
-  }, [allTrainers]);
+  }, [apiMode, apiTrainers, localTrainers]);
 
-  const filteredTrainers = useMemo(() => {
-    return allTrainers.filter((t) => {
-      if (searchTrainer.trim() && !t.fullName.toLowerCase().includes(searchTrainer.toLowerCase().trim())) {
-        return false;
-      }
-      if (selectedSpecialty !== 'all' && !t.trainer?.specialties.includes(selectedSpecialty)) {
-        return false;
-      }
-      if (selectedBranch !== 'all' && !t.trainer?.branchIds.includes(selectedBranch)) {
-        return false;
-      }
+  const filteredApiTrainers = useMemo(() => {
+    return apiTrainers.filter((t) => {
+      if (searchTrainer.trim() && !t.fullName.toLowerCase().includes(searchTrainer.toLowerCase().trim())) return false;
+      const specs = (t.specialty || '').split(',').map((s) => s.trim());
+      if (selectedSpecialty !== 'all' && !specs.includes(selectedSpecialty)) return false;
+      if (selectedBranch !== 'all' && t.branchId !== selectedBranch) return false;
       return true;
     });
-  }, [allTrainers, searchTrainer, selectedSpecialty, selectedBranch]);
+  }, [apiTrainers, searchTrainer, selectedSpecialty, selectedBranch]);
 
-  const rawSlots = useMemo(() => {
+  const filteredLocalTrainers = useMemo(() => {
+    return localTrainers.filter((t) => {
+      if (searchTrainer.trim() && !t.fullName.toLowerCase().includes(searchTrainer.toLowerCase().trim())) return false;
+      if (selectedSpecialty !== 'all' && !t.trainer?.specialties.includes(selectedSpecialty)) return false;
+      if (selectedBranch !== 'all' && !t.trainer?.branchIds.includes(selectedBranch)) return false;
+      return true;
+    });
+  }, [localTrainers, searchTrainer, selectedSpecialty, selectedBranch]);
+
+  const selectedApiTrainer = apiMode ? apiTrainers.find((x) => x.id === tid) ?? null : null;
+  const selectedLocalTrainer = !apiMode ? L.userById(db, tid) : undefined;
+
+  type UnifiedSlot = { id: string; startAt: string; endAt: string; branchId: string; branchName: string; isBooked: boolean };
+  const rawSlots: UnifiedSlot[] = useMemo(() => {
+    if (apiMode) {
+      return apiTrainerSlots
+        .filter((s) => new Date(s.startAt).getTime() > now)
+        .map((s) => ({
+          id: s.id,
+          startAt: s.startAt,
+          endAt: s.endAt,
+          branchId: selectedApiTrainer?.branchId ?? '',
+          branchName: selectedApiTrainer?.branchName ?? 'Chi nhánh OOAD',
+          isBooked: s.isBooked,
+        }))
+        .sort((a, b) => a.startAt.localeCompare(b.startAt));
+    }
     return db.trainerSlots
       .filter((s) => s.trainerId === tid && new Date(s.startAt).getTime() > now)
+      .map((s) => ({
+        id: s.id,
+        startAt: s.startAt,
+        endAt: s.endAt,
+        branchId: s.branchId,
+        branchName: L.branchById(db, s.branchId)?.name ?? 'Chi nhánh',
+        isBooked: L.slotTaken(db, s.id),
+      }))
       .sort((a, b) => a.startAt.localeCompare(b.startAt));
-  }, [db.trainerSlots, tid, now]);
+  }, [apiMode, apiTrainerSlots, selectedApiTrainer, db, tid, now]);
 
   const availableDates = useMemo(() => {
-    const dates = Array.from(new Set(rawSlots.map((s) => s.startAt.slice(0, 10))));
-    return dates;
+    return Array.from(new Set(rawSlots.map((s) => toDateStr(new Date(s.startAt)))));
   }, [rawSlots]);
 
   const slots = useMemo(() => {
     return rawSlots.filter((s) => {
-      const d = s.startAt.slice(0, 10);
+      const d = toDateStr(new Date(s.startAt));
       if (selectedDate !== 'all' && d !== selectedDate) return false;
 
       const hour = new Date(s.startAt).getHours();
@@ -1014,8 +1101,8 @@ export function MemberPT() {
   }, [rawSlots, selectedDate, timeOfDay]);
 
   const byDay = useMemo(() => {
-    return slots.reduce<Record<string, typeof slots>>((acc, s) => {
-      const d = s.startAt.slice(0, 10);
+    return slots.reduce<Record<string, UnifiedSlot[]>>((acc, s) => {
+      const d = toDateStr(new Date(s.startAt));
       (acc[d] ||= []).push(s);
       return acc;
     }, {});
@@ -1028,22 +1115,47 @@ export function MemberPT() {
 
   const book = async () => {
     if (!slot) return;
-    try {
-      await ptApi.bookPt({ availabilityId: slot, note });
-      toast('Đã gửi yêu cầu đặt lịch đến HLV thành công!', 'success');
-      setSlot(null);
-      setNote('');
-      ptApi.getPtBalance().then(setApiBalance).catch(() => {});
-    } catch {
-      const r = act((d) => L.bookPT(d, user!.id, slot, note), 'Đã gửi yêu cầu đặt lịch, chờ HLV xác nhận');
-      if (r) {
+    if (apiMode) {
+      if (!getAuthToken()) {
+        toast('Vui lòng đăng nhập bằng tài khoản Hội viên để đặt lịch PT.', 'error');
+        return;
+      }
+      setBookingBusy(true);
+      try {
+        await ptApi.bookPt({ availabilityId: slot, note });
+        toast('Đã gửi yêu cầu đặt lịch đến HLV thành công!', 'success');
         setSlot(null);
         setNote('');
+        await Promise.all([
+          ptApi.getPtBalance().then(setApiBalance).catch(() => {}),
+          loadTrainerSlots(tid),
+        ]);
+      } catch (err) {
+        if (isApiNetworkError(err)) {
+          const r = act((d) => L.bookPT(d, user!.id, slot, note), 'Đã gửi yêu cầu đặt lịch, chờ HLV xác nhận');
+          if (r) {
+            setSlot(null);
+            setNote('');
+          }
+        } else {
+          toast((err as Error).message, 'error');
+        }
+      } finally {
+        setBookingBusy(false);
       }
+      return;
+    }
+
+    const r = act((d) => L.bookPT(d, user!.id, slot, note), 'Đã gửi yêu cầu đặt lịch, chờ HLV xác nhận');
+    if (r) {
+      setSlot(null);
+      setNote('');
     }
   };
 
   const sel = rawSlots.find((s) => s.id === slot);
+  const displayedCount = apiMode ? filteredApiTrainers.length : filteredLocalTrainers.length;
+  const activeTrainerName = apiMode ? selectedApiTrainer?.fullName : selectedLocalTrainer?.fullName;
 
   return (
     <>
@@ -1068,7 +1180,7 @@ export function MemberPT() {
           <Badge color="purple">Bước 1</Badge>
           <div className="small">
             <div className="bold">Chọn Huấn luyện viên</div>
-            <div className="dim">Đang chọn: {tr?.fullName || 'Chưa chọn'}</div>
+            <div className="dim">Đang chọn: {activeTrainerName || 'Chưa chọn'}</div>
           </div>
         </div>
         <div className="card row" style={{ padding: '12px 16px', borderLeft: `4px solid ${sel ? 'var(--accent)' : 'var(--border)'}` }}>
@@ -1123,7 +1235,7 @@ export function MemberPT() {
               onChange={(e) => setSelectedBranch(e.target.value)}
             >
               <option value="all">Tất cả cơ sở TP.HCM</option>
-              {db.branches.map((b) => (
+              {(apiMode ? apiBranches : db.branches).map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
                 </option>
@@ -1132,7 +1244,7 @@ export function MemberPT() {
           </div>
 
           <span className="small muted">
-            Hiển thị <b>{filteredTrainers.length}</b> huấn luyện viên
+            Hiển thị <b>{displayedCount}</b> huấn luyện viên
           </span>
         </div>
       </div>
@@ -1140,7 +1252,7 @@ export function MemberPT() {
       <div className="grid" style={{ gridTemplateColumns: 'minmax(280px, 330px) 1fr', gap: 18 }}>
         {/* DANH SÁCH HLV */}
         <div className="col" style={{ gap: 10 }}>
-          {filteredTrainers.length === 0 ? (
+          {displayedCount === 0 ? (
             <div className="card" style={{ padding: 24, textAlign: 'center' }}>
               <Empty text="Không tìm thấy HLV phù hợp bộ lọc." />
               <button
@@ -1154,8 +1266,54 @@ export function MemberPT() {
                 Đặt lại bộ lọc
               </button>
             </div>
+          ) : apiMode ? (
+            filteredApiTrainers.map((t) => {
+              const isSel = t.id === tid;
+              return (
+                <div
+                  key={t.id}
+                  className={`card hover ${isSel ? 'border-primary' : ''}`}
+                  style={{
+                    padding: 13,
+                    cursor: 'pointer',
+                    background: isSel ? 'rgba(79, 70, 229, 0.08)' : undefined,
+                    border: isSel ? '2px solid var(--primary)' : '1px solid var(--border)',
+                    transition: 'all 0.2s ease',
+                  }}
+                  onClick={() => {
+                    setTid(t.id);
+                    setSlot(null);
+                    setSelectedDate('all');
+                  }}
+                  id={`trainer-${t.id}`}
+                >
+                  <div className="row" style={{ gap: 12, alignItems: 'center' }}>
+                    <Avatar user={{ fullName: t.fullName, avatarColor: '#7c5cff' }} />
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <div className="row between">
+                        <span className="bold" style={{ fontSize: 15, color: isSel ? 'var(--primary)' : 'var(--text)' }}>
+                          {t.fullName}
+                        </span>
+                        <Badge color="purple" plain>{t.branchName?.replace('DF Gym Center - ', '') || 'PT'}</Badge>
+                      </div>
+                      <div className="small dim truncate" style={{ marginTop: 2 }}>
+                        {t.specialty || 'Huấn luyện viên cá nhân'}
+                      </div>
+                      <div className="row between small mt8" style={{ alignItems: 'center' }}>
+                        <div className="row" style={{ gap: 4 }}>
+                          <Stars value={t.averageRating || 5} size={13} />
+                          <span className="bold">{t.averageRating ? t.averageRating.toFixed(1) : '5.0'}</span>
+                          <span className="dim">({t.reviewCount})</span>
+                        </div>
+                        <span className="dim">{t.experienceYears} năm KN</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
           ) : (
-            filteredTrainers.map((t) => {
+            filteredLocalTrainers.map((t) => {
               const r = rating(t.id);
               const isSel = t.id === tid;
               const openSlotsCount = db.trainerSlots.filter(
@@ -1215,17 +1373,27 @@ export function MemberPT() {
         </div>
 
         {/* CHI TIẾT HLV & CHỌN LỊCH RẢNH */}
-        {tr && (
+        {(selectedApiTrainer || selectedLocalTrainer) && (
           <div className="col" style={{ gap: 18 }}>
             <div className="card" style={{ padding: 20 }}>
               <div className="row" style={{ gap: 18, alignItems: 'flex-start' }}>
-                <Avatar user={tr} size="lg" />
+                <Avatar
+                  user={
+                    selectedApiTrainer
+                      ? { fullName: selectedApiTrainer.fullName, avatarColor: '#7c5cff' }
+                      : selectedLocalTrainer
+                  }
+                  size="lg"
+                />
                 <div className="grow">
                   <div className="row between wrap" style={{ gap: 8 }}>
                     <div>
-                      <h2 style={{ fontSize: 20, marginBottom: 4 }}>HLV {tr.fullName}</h2>
+                      <h2 style={{ fontSize: 20, marginBottom: 4 }}>HLV {activeTrainerName}</h2>
                       <div className="row wrap" style={{ gap: 6 }}>
-                        {tr.trainer?.specialties.map((s) => (
+                        {(selectedApiTrainer
+                          ? (selectedApiTrainer.specialty || 'Fitness').split(',').map((s) => s.trim()).filter(Boolean)
+                          : selectedLocalTrainer?.trainer?.specialties ?? []
+                        ).map((s) => (
                           <Badge key={s} color="purple">
                             {s}
                           </Badge>
@@ -1236,29 +1404,43 @@ export function MemberPT() {
                       className="row small"
                       style={{ gap: 6, background: 'var(--surface-2)', padding: '6px 12px', borderRadius: 8 }}
                     >
-                      <Stars value={rating(tr.id).avg} size={15} />
-                      <span className="bold">{rating(tr.id).avg ? rating(tr.id).avg.toFixed(1) : '5.0'}</span>
-                      <span className="dim">({rating(tr.id).n} đánh giá)</span>
+                      {selectedApiTrainer ? (
+                        <>
+                          <Stars value={selectedApiTrainer.averageRating || 5} size={15} />
+                          <span className="bold">{(selectedApiTrainer.averageRating || 5).toFixed(1)}</span>
+                          <span className="dim">({selectedApiTrainer.reviewCount} đánh giá)</span>
+                        </>
+                      ) : (
+                        <>
+                          <Stars value={rating(selectedLocalTrainer!.id).avg} size={15} />
+                          <span className="bold">{rating(selectedLocalTrainer!.id).avg ? rating(selectedLocalTrainer!.id).avg.toFixed(1) : '5.0'}</span>
+                          <span className="dim">({rating(selectedLocalTrainer!.id).n} đánh giá)</span>
+                        </>
+                      )}
                     </div>
                   </div>
 
                   <p className="muted mt8" style={{ lineHeight: 1.55 }}>
-                    {tr.trainer?.bio ||
+                    {(selectedApiTrainer ? selectedApiTrainer.bio : selectedLocalTrainer?.trainer?.bio) ||
                       'Huấn luyện viên tận tâm, kinh nghiệm xây dựng giáo án cá nhân hóa đạt chuẩn quốc tế.'}
                   </p>
 
                   <div className="row wrap small muted mt12" style={{ gap: 16 }}>
                     <span className="row" style={{ gap: 6 }}>
                       <Award size={15} color="var(--primary)" />
-                      <b>{tr.trainer?.experienceYears} năm</b> kinh nghiệm
+                      <b>{selectedApiTrainer ? selectedApiTrainer.experienceYears : selectedLocalTrainer?.trainer?.experienceYears} năm</b> kinh nghiệm
                     </span>
-                    <span className="row" style={{ gap: 6 }}>
-                      <CheckCircle2 size={15} color="var(--teal)" />
-                      {tr.trainer?.certifications.join(', ')}
-                    </span>
+                    {selectedLocalTrainer?.trainer?.certifications && (
+                      <span className="row" style={{ gap: 6 }}>
+                        <CheckCircle2 size={15} color="var(--teal)" />
+                        {selectedLocalTrainer.trainer.certifications.join(', ')}
+                      </span>
+                    )}
                     <span className="row" style={{ gap: 6 }}>
                       <MapPin size={15} color="var(--amber)" />
-                      {tr.trainer?.branchIds.map((b) => L.branchById(db, b)?.name).join(', ')}
+                      {selectedApiTrainer
+                        ? (selectedApiTrainer.branchName || 'Hệ thống DFGymCenter')
+                        : selectedLocalTrainer?.trainer?.branchIds.map((b) => L.branchById(db, b)?.name).join(', ')}
                     </span>
                   </div>
                 </div>
@@ -1269,7 +1451,7 @@ export function MemberPT() {
               <div className="card-head between wrap" style={{ gap: 12 }}>
                 <div>
                   <h2>
-                    <CalendarDays size={18} /> Lịch Rảnh Của HLV {tr.fullName}
+                    <CalendarDays size={18} /> Lịch Rảnh Của HLV {activeTrainerName}
                   </h2>
                   <span className="small muted">
                     Chỉ các khung giờ cách hiện tại tối thiểu {db.settings.cancelDeadlineHours} giờ mới có thể đặt lịch
@@ -1280,22 +1462,13 @@ export function MemberPT() {
                   <button className={`chip ${timeOfDay === 'all' ? 'on' : ''}`} onClick={() => setTimeOfDay('all')}>
                     Tất cả buổi
                   </button>
-                  <button
-                    className={`chip ${timeOfDay === 'morning' ? 'on' : ''}`}
-                    onClick={() => setTimeOfDay('morning')}
-                  >
+                  <button className={`chip ${timeOfDay === 'morning' ? 'on' : ''}`} onClick={() => setTimeOfDay('morning')}>
                     <Sunrise size={13} style={{ marginRight: 4 }} /> Sáng (5h30–12h)
                   </button>
-                  <button
-                    className={`chip ${timeOfDay === 'afternoon' ? 'on' : ''}`}
-                    onClick={() => setTimeOfDay('afternoon')}
-                  >
+                  <button className={`chip ${timeOfDay === 'afternoon' ? 'on' : ''}`} onClick={() => setTimeOfDay('afternoon')}>
                     <Sun size={13} style={{ marginRight: 4 }} /> Chiều (12h–17h)
                   </button>
-                  <button
-                    className={`chip ${timeOfDay === 'evening' ? 'on' : ''}`}
-                    onClick={() => setTimeOfDay('evening')}
-                  >
+                  <button className={`chip ${timeOfDay === 'evening' ? 'on' : ''}`} onClick={() => setTimeOfDay('evening')}>
                     <Sunset size={13} style={{ marginRight: 4 }} /> Tối (17h–22h)
                   </button>
                 </div>
@@ -1310,7 +1483,7 @@ export function MemberPT() {
                     Tất cả ngày ({rawSlots.length})
                   </button>
                   {availableDates.map((d) => {
-                    const count = rawSlots.filter((s) => s.startAt.startsWith(d)).length;
+                    const count = rawSlots.filter((s) => toDateStr(new Date(s.startAt)) === d).length;
                     const isCur = selectedDate === d;
                     return (
                       <button
@@ -1325,7 +1498,9 @@ export function MemberPT() {
                 </div>
               )}
 
-              {slots.length === 0 ? (
+              {loadingSlots ? (
+                <div style={{ padding: '24px', textAlign: 'center' }} className="muted">Đang tải khung giờ rảnh của HLV...</div>
+              ) : slots.length === 0 ? (
                 <div style={{ padding: '30px 20px', textAlign: 'center' }}>
                   <Empty text="Không có khung giờ rảnh nào phù hợp với bộ lọc buổi hoặc ngày này." />
                 </div>
@@ -1342,14 +1517,13 @@ export function MemberPT() {
 
                       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(185px, 1fr))', gap: 10 }}>
                         {list.map((s) => {
-                          const taken = L.slotTaken(db, s.id);
+                          const taken = s.isBooked;
                           const tooSoon = hoursUntil(s.startAt) < db.settings.cancelDeadlineHours;
                           const disabled = taken || tooSoon;
                           const isSel = slot === s.id;
                           const startMs = new Date(s.startAt).getTime();
                           const endMs = new Date(s.endAt).getTime();
                           const durMin = Math.round((endMs - startMs) / 60000);
-                          const branchObj = L.branchById(db, s.branchId);
                           const pKey = getPeriodKey(s.startAt);
                           const pLabel = pKey === 'morning' ? 'Sáng' : pKey === 'afternoon' ? 'Chiều' : 'Tối';
 
@@ -1389,7 +1563,7 @@ export function MemberPT() {
                               </div>
 
                               <div className="small dim truncate">
-                                📍 {branchObj?.name || 'Chi nhánh'} · Ca {pLabel}
+                                📍 {s.branchName} · Ca {pLabel}
                               </div>
 
                               <div className="row between mt8 small">
@@ -1426,11 +1600,11 @@ export function MemberPT() {
                       Xác nhận ca tập: {fmtWeekday(sel.startAt)}, {fmtDateTime(sel.startAt)} (
                       {Math.round((new Date(sel.endAt).getTime() - new Date(sel.startAt).getTime()) / 60000)} phút)
                     </div>
-                    <Badge color="green">{L.branchById(db, sel.branchId)?.name}</Badge>
+                    <Badge color="green">{sel.branchName}</Badge>
                   </div>
 
                   <div className="small muted mb12" style={{ lineHeight: 1.5 }}>
-                    📌 Huấn luyện viên: <b>{tr.fullName}</b>. Sẽ trừ <b>1 buổi</b> (ưu tiên{' '}
+                    📌 Huấn luyện viên: <b>{activeTrainerName}</b>. Sẽ trừ <b>1 buổi</b> (ưu tiên{' '}
                     {bal.free > 0 ? 'buổi tặng kèm của gói hội viên' : 'từ gói PT cá nhân'}). Hủy trước{' '}
                     {db.settings.cancelDeadlineHours} giờ hoặc HLV từ chối lịch sẽ được hoàn lại 100% buổi tập.
                   </div>
@@ -1464,11 +1638,11 @@ export function MemberPT() {
                     <button
                       className="btn primary"
                       onClick={book}
-                      disabled={bal.total === 0}
+                      disabled={bal.total === 0 || bookingBusy}
                       id="pt-book"
                       style={{ minWidth: 150 }}
                     >
-                      Xác nhận đặt lịch
+                      {bookingBusy ? 'Đang gửi...' : 'Xác nhận đặt lịch'}
                     </button>
                   </div>
                 </div>
@@ -1721,7 +1895,8 @@ export function MemberBookings() {
           const res = await bookingsApi.cancelClassBooking(target.id);
           toast(res.message, res.quotaRefunded ? 'success' : 'warning');
         } else {
-          act((d) => L.cancelPTByMember(d, uid, target.id));
+          await ptApi.cancelPtBooking(target.id);
+          toast('Đã hủy lịch hẹn PT thành công và hoàn lại buổi tập vào gói của bạn.', 'success');
         }
         await loadMySchedule();
       } catch (err) {

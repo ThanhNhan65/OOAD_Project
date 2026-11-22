@@ -44,7 +44,6 @@ export function resolveNotificationLink(n: NotificationApiDto, role?: Role): str
   if (ref.includes('freeze')) {
     return role === 'receptionist' ? '/staff/freeze' : '/member/memberships';
   }
-  if (ref.includes('rule')) return '/rules';
   return null;
 }
 
