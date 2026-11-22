@@ -161,7 +161,7 @@ export function createSeed(): DB {
   });
 
   /* ---------------- memberships & payments ---------------- */
-  const methods: PaymentMethod[] = ['momo', 'vnpay', 'card', 'banking'];
+  const methods: PaymentMethod[] = ['ZaloPay', 'vnpay', 'card', 'banking'];
   const addMs = (memberId: string, planId: string, start: string, branchId: string, opts: Partial<MemberMembership> = {}) => {
     const plan = db.membershipPlans.find((p) => p.id === planId)!;
     const m: MemberMembership = {
@@ -207,7 +207,7 @@ export function createSeed(): DB {
   addMs('m1', 'mp_standard', addDays(T, -60), 'br1');
   const vipAn = addMs('m1', 'mp_vip', addDays(T, -29), 'br1', { freeSessionsUsed: 5, isRenewal: true, createdAt: iso(addDays(T, -32), '20:10') });
   const ptAn = addPT('m1', 'pt10', addDays(T, -8), 0, 'br1');
-  db.payments.push({ id: id('pay'), memberId: 'm1', kind: 'pt', refId: 'pt_failed_demo', amount: 1750000, method: 'momo', status: 'failed', branchId: 'br1', description: 'Mua gói PT Starter 5 buổi', createdAt: iso(addDays(T, -9), '21:40') });
+  db.payments.push({ id: id('pay'), memberId: 'm1', kind: 'pt', refId: 'pt_failed_demo', amount: 1750000, method: 'ZaloPay', status: 'failed', branchId: 'br1', description: 'Mua gói PT Starter 5 buổi', createdAt: iso(addDays(T, -9), '21:40') });
   db.ptPackages.push({ id: 'pt_failed_demo', memberId: 'm1', ptPlanId: 'pt5', sessionsTotal: 5, sessionsUsed: 0, startDate: addDays(T, -9), endDate: addDays(T, -9), payStatus: 'pending_payment', createdAt: iso(addDays(T, -9), '21:40') });
 
   // m2 – Standard sắp hết hạn
@@ -257,17 +257,17 @@ export function createSeed(): DB {
 
   /* ---------------- classes ---------------- */
   db.classes.push(
-    { id: 'cl_yoga', name: 'Yoga Flow (YOGA-101)', category: 'Yoga', description: 'Chuỗi động tác Vinyasa giúp dẻo dai cột sống và thư giãn sâu.', trainerId: 'tr2', branchId: 'br1', room: 'Phòng Yoga - Lầu 2', daysOfWeek: [1, 3, 5], startTime: '06:30', durationMin: 60, capacity: 15, color: '#10b981', active: true },
-    { id: 'cl_pilates', name: 'Pilates Core (PIL-102)', category: 'Pilates', description: 'Tăng cường cơ lõi trọng tâm, cải thiện tư thế chuẩn văn phòng.', trainerId: 'tr4', branchId: 'br3', room: 'Studio C - Lầu 3', daysOfWeek: [2, 4, 6], startTime: '07:30', durationMin: 60, capacity: 12, color: '#0d9488', active: true },
-    { id: 'cl_pump', name: 'Body Pump Sức Mạnh (PUMP-201)', category: 'Sức mạnh', description: 'Tạ đòn nhịp điệu, lặp nhiều hiệp – săn chắc toàn thân.', trainerId: 'tr2', branchId: 'br1', room: 'Studio A - Lầu 1', daysOfWeek: [1, 4, 6, 0], startTime: '09:00', durationMin: 60, capacity: 15, color: '#f59e0b', active: true },
-    { id: 'cl_stretch', name: 'Mobility & Giãn Cơ (MOB-204)', category: 'Yoga', description: 'Mở khớp vai, hông và phục hồi cơ bắp sau tập nặng.', trainerId: 'tr4', branchId: 'br4', room: 'Phòng Yoga - Lầu 2', daysOfWeek: [1, 3, 5], startTime: '14:00', durationMin: 60, capacity: 15, color: '#0284c7', active: true },
-    { id: 'cl_core', name: 'Core & Abs Blast (CORE-205)', category: 'HIIT', description: 'Đốt mỡ bụng chuyên sâu và siết cơ trọng tâm trong 45 phút.', trainerId: 'tr1', branchId: 'br5', room: 'Studio A - Lầu 2', daysOfWeek: [2, 4, 6], startTime: '15:30', durationMin: 45, capacity: 14, color: '#6366f1', active: true },
-    { id: 'cl_spin', name: 'Spin Cycling (SPIN-301)', category: 'Cardio', description: 'Đạp xe trong nhà theo nhạc EDM, đốt 550+ kcal.', trainerId: 'tr1', branchId: 'br1', room: 'Phòng Cycling - Lầu 1', daysOfWeek: [2, 4, 6], startTime: '17:30', durationMin: 45, capacity: 12, color: '#3b82f6', active: true },
-    { id: 'cl_zumba', name: 'Zumba Latin Party (ZUM-302)', category: 'Dance', description: 'Nhảy Latin sôi động giải tỏa căng thẳng, đốt mỡ toàn thân.', trainerId: 'tr3', branchId: 'br2', room: 'Studio B - Lầu 2', daysOfWeek: [1, 3, 5], startTime: '18:30', durationMin: 60, capacity: 20, color: '#8b5cf6', active: true },
+    { id: 'cl_yoga', name: 'Yoga Flow (YOGA-101)', category: 'Yoga', description: 'Chuỗi động tác Vinyasa giúp dẻo dai cột sống và thư giãn sâu.', trainerId: 'tr2', branchId: 'br1', room: 'Phòng Yoga - Lầu 2', daysOfWeek: [0, 1, 3, 5], startTime: '06:30', durationMin: 60, capacity: 15, color: '#10b981', active: true },
+    { id: 'cl_pilates', name: 'Pilates Core (PIL-102)', category: 'Pilates', description: 'Tăng cường cơ lõi trọng tâm, cải thiện tư thế chuẩn văn phòng.', trainerId: 'tr4', branchId: 'br3', room: 'Studio C - Lầu 3', daysOfWeek: [0, 2, 4, 6], startTime: '07:30', durationMin: 60, capacity: 12, color: '#0d9488', active: true },
+    { id: 'cl_pump', name: 'Body Pump Sức Mạnh (PUMP-201)', category: 'Sức mạnh', description: 'Tạ đòn nhịp điệu, lặp nhiều hiệp – săn chắc toàn thân.', trainerId: 'tr2', branchId: 'br1', room: 'Studio A - Lầu 1', daysOfWeek: [0, 1, 4, 6], startTime: '09:00', durationMin: 60, capacity: 15, color: '#f59e0b', active: true },
+    { id: 'cl_stretch', name: 'Mobility & Giãn Cơ (MOB-204)', category: 'Yoga', description: 'Mở khớp vai, hông và phục hồi cơ bắp sau tập nặng.', trainerId: 'tr4', branchId: 'br4', room: 'Phòng Yoga - Lầu 2', daysOfWeek: [0, 1, 3, 5], startTime: '14:00', durationMin: 60, capacity: 15, color: '#0284c7', active: true },
+    { id: 'cl_core', name: 'Core & Abs Blast (CORE-205)', category: 'HIIT', description: 'Đốt mỡ bụng chuyên sâu và siết cơ trọng tâm trong 45 phút.', trainerId: 'tr1', branchId: 'br5', room: 'Studio A - Lầu 2', daysOfWeek: [0, 2, 4, 6], startTime: '15:30', durationMin: 45, capacity: 6, color: '#6366f1', active: true },
+    { id: 'cl_spin', name: 'Spin Cycling (SPIN-301)', category: 'Cardio', description: 'Đạp xe trong nhà theo nhạc EDM, đốt 550+ kcal.', trainerId: 'tr1', branchId: 'br1', room: 'Phòng Cycling - Lầu 1', daysOfWeek: [0, 2, 4, 6], startTime: '17:30', durationMin: 45, capacity: 12, color: '#3b82f6', active: true },
+    { id: 'cl_zumba', name: 'Zumba Latin Party (ZUM-302)', category: 'Dance', description: 'Nhảy Latin sôi động giải tỏa căng thẳng, đốt mỡ toàn thân.', trainerId: 'tr3', branchId: 'br2', room: 'Studio B - Lầu 2', daysOfWeek: [0, 1, 3, 5], startTime: '18:30', durationMin: 60, capacity: 20, color: '#8b5cf6', active: true },
     { id: 'cl_box', name: 'Boxing & Kickfit (BOX-303)', category: 'Võ thuật', description: 'Kỹ thuật đấm - đá cơ bản kết hợp bài tập phản xạ cardio.', trainerId: 'tr3', branchId: 'br2', room: 'Phòng Boxing - Lầu 1', daysOfWeek: [2, 4, 6], startTime: '18:30', durationMin: 60, capacity: 12, color: '#ea580c', active: true },
     { id: 'cl_hiit', name: 'HIIT Burn (HIIT-304)', category: 'HIIT', description: 'Cường độ cao ngắt quãng – lớp nhỏ, đốt calo cực mạnh!', trainerId: 'tr1', branchId: 'br1', room: 'Studio A - Lầu 1', daysOfWeek: [0, 1, 2, 3, 4, 5, 6], startTime: '19:30', durationMin: 45, capacity: 4, color: '#e11d48', active: true },
   );
-  ensureSessions(db, -21, 14);
+  ensureSessions(db, -21, 16);
 
   /* ---------------- check-ins history ---------------- */
   const memberBranch: Record<string, string> = { m1: 'br1', m2: 'br1', m3: 'br1', m5: 'br2', m6: 'br2', m7: 'br2', m8: 'br1', m9: 'br3', m11: 'br3', m12: 'br2', m14: 'br3', m15: 'br2', m16: 'br2' };
@@ -308,22 +308,45 @@ export function createSeed(): DB {
     br4: ['m1', 'm3', 'm5'],
     br5: ['m2', 'm8', 'm12'],
   };
-  const mkCB = (sessionId: string, memberId: string, status: ClassBooking['status'], createdAt: string, priority = 2, checkedIn = false) =>
+  const hasCB = (sessionId: string, memberId: string) =>
+    db.classBookings.some(
+      (b) => b.sessionId === sessionId && b.memberId === memberId && ['booked', 'waitlist', 'attended', 'no_show'].includes(b.status),
+    );
+  const mkCB = (sessionId: string, memberId: string, status: ClassBooking['status'], createdAt: string, priority = 2, checkedIn = false) => {
+    if (hasCB(sessionId, memberId)) return;
     db.classBookings.push({ id: id('cb'), sessionId, memberId, membershipId: db.memberships.find((m) => m.memberId === memberId)?.id ?? '', status, priority, checkedIn, createdAt, updatedAt: createdAt });
+  };
   const prio = (mid: string) => {
     const m = db.memberships.filter((x) => x.memberId === mid).sort((a, b) => b.endDate.localeCompare(a.endDate))[0];
     return db.membershipPlans.find((p) => p.id === m?.planId)?.priority ?? 1;
   };
+  const todayDt = new Date(atTime(T, '00:00'));
+  const diffToMon = todayDt.getDay() === 0 ? -6 : 1 - todayDt.getDay();
+  const thisWeekMon = addDays(T, diffToMon);
+  const nextWeekMon = addDays(thisWeekMon, 7);
+
+  // Giữ 2 buổi vừa diễn ra gần nhất trong 23h qua của HLV tr1 ở trạng thái chờ điểm danh (tab "Cần điểm danh")
+  const tr1ToMark = db.sessions
+    .filter(
+      (s) =>
+        s.trainerId === 'tr1' &&
+        new Date(s.startAt).getTime() <= now &&
+        new Date(s.startAt).getTime() > now - 23 * 3600000,
+    )
+    .sort((a, b) => b.startAt.localeCompare(a.startAt))
+    .slice(0, 2);
+  const tr1ToMarkIds = new Set(tr1ToMark.map((s) => s.id));
+
   for (const s of db.sessions) {
     const c = db.classes.find((x) => x.id === s.classId)!;
     const past = new Date(s.startAt).getTime() < now;
     const pool = classMembers[c.branchId];
-    if (past) {
+    if (past && !tr1ToMarkIds.has(s.id)) {
       const date = s.date;
       pool.forEach((mid) => {
         if (r() < 0.35 && validOn(mid, date)) {
           const attended = r() < 0.85;
-          if (attended) addCI(mid, c.branchId, date, String(new Date(s.startAt).getHours() - 0).padStart(2, '0') + ':' + '00', String(new Date(s.endAt).getHours() + 1).padStart(2, '0') + ':00');
+          if (attended) addCI(mid, c.branchId, date, String(new Date(s.startAt).getHours()).padStart(2, '0') + ':00', String(new Date(s.endAt).getHours() + 1).padStart(2, '0') + ':00');
           mkCB(s.id, mid, attended ? 'attended' : 'no_show', new Date(new Date(s.startAt).getTime() - 86400000 * 2).toISOString(), prio(mid), attended);
         }
       });
@@ -341,29 +364,163 @@ export function createSeed(): DB {
       s.attendanceConfirmed = true;
     }
   }
-  // HIIT tối mai: đầy 4 chỗ + 1 chờ -> demo waitlist
-  const tomorrow = addDays(T, 1);
-  const hiitTmr = db.sessions.find((s) => s.classId === 'cl_hiit' && s.date === tomorrow)!;
-  ['m2', 'm3', 'm8', 'm16'].forEach((mid, i) => mkCB(hiitTmr.id, mid, 'booked', iso(addDays(T, -1), `1${i}:00`), prio(mid)));
-  mkCB(hiitTmr.id, 'm12', 'waitlist', iso(T, '06:00'), prio('m12'));
-  // An đã đặt vài lớp sắp tới
-  const yogaNext = db.sessions.filter((s) => s.classId === 'cl_yoga' && new Date(s.startAt).getTime() > now)[0];
-  const spinNext = db.sessions.filter((s) => s.classId === 'cl_spin' && new Date(s.startAt).getTime() > now)[0];
-  if (yogaNext) mkCB(yogaNext.id, 'm1', 'booked', iso(addDays(T, -1), '20:00'), 3);
-  if (spinNext) mkCB(spinNext.id, 'm1', 'booked', iso(addDays(T, -1), '20:05'), 3);
-  // vài lịch tương lai khác
-  db.sessions
-    .filter((s) => new Date(s.startAt).getTime() > now && s.id !== hiitTmr.id)
-    .forEach((s) => {
+
+  // Tạo roster mẫu cho các buổi "Cần điểm danh" của HLV tr1: có người đã check-in (m1, m2, m3) và có người chưa check-in (m8)
+  if (tr1ToMark.length > 0) {
+    const toMarkDates = new Set(tr1ToMark.map((s) => s.date));
+    db.checkins = db.checkins.filter(
+      (ci) => !(ci.memberId === 'm8' && toMarkDates.has(toDateStr(new Date(ci.checkInAt)))),
+    );
+    tr1ToMark.forEach((s) => {
       const c = db.classes.find((x) => x.id === s.classId)!;
-      classMembers[c.branchId].forEach((mid) => {
-        if (mid !== 'm1' && r() < 0.3 && validOn(mid, s.date)) mkCB(s.id, mid, 'booked', iso(T, '07:00'), prio(mid));
+      const hIn = String(Math.max(5, new Date(s.startAt).getHours() - 1)).padStart(2, '0');
+      const hOut = String(Math.min(22, new Date(s.endAt).getHours() + 1)).padStart(2, '0');
+      ['m1', 'm2', 'm3'].forEach((mid, i) => {
+        addCI(mid, c.branchId, s.date, `${hIn}:4${i}`, `${hOut}:05`);
+        mkCB(s.id, mid, 'booked', new Date(new Date(s.startAt).getTime() - 43200000).toISOString(), prio(mid), true);
       });
+      mkCB(s.id, 'm8', 'booked', new Date(new Date(s.startAt).getTime() - 36000000).toISOString(), prio('m8'), false);
     });
+  }
+
+  // Đảm bảo m1 có 2 buổi "Đã tham gia" trong tuần hiện tại (chưa đánh giá -> hiện nút Đánh giá) và 1 buổi tuần trước (đã đánh giá)
+  const m1CurrentWeekCompleted = db.sessions
+    .filter((s) => s.status === 'completed' && s.date >= thisWeekMon && s.date < T)
+    .sort((a, b) => b.startAt.localeCompare(a.startAt));
+  let m1AttendedThisWeek = m1CurrentWeekCompleted.filter((s) => hasCB(s.id, 'm1')).length;
+  for (const pastSess of m1CurrentWeekCompleted) {
+    if (m1AttendedThisWeek >= 2) break;
+    if (hasCB(pastSess.id, 'm1')) continue;
+    const sampleClass = db.classes.find((x) => x.id === pastSess.classId)!;
+    if (!validOn('m1', pastSess.date)) continue;
+    const hStart = String(new Date(pastSess.startAt).getHours()).padStart(2, '0');
+    const hEnd = String(Math.min(22, new Date(pastSess.endAt).getHours() + 1)).padStart(2, '0');
+    addCI('m1', sampleClass.branchId, pastSess.date, `${hStart}:00`, `${hEnd}:00`);
+    mkCB(pastSess.id, 'm1', 'attended', new Date(new Date(pastSess.startAt).getTime() - 86400000).toISOString(), 3, true);
+    m1AttendedThisWeek++;
+  }
+
+  const m1LastWeekPast = db.sessions
+    .filter((s) => s.status === 'completed' && s.date < thisWeekMon)
+    .sort((a, b) => b.startAt.localeCompare(a.startAt))[0];
+  if (m1LastWeekPast && !hasCB(m1LastWeekPast.id, 'm1')) {
+    const lwClass = db.classes.find((x) => x.id === m1LastWeekPast.classId)!;
+    const hStart = String(new Date(m1LastWeekPast.startAt).getHours()).padStart(2, '0');
+    const hEnd = String(Math.min(22, new Date(m1LastWeekPast.endAt).getHours() + 1)).padStart(2, '0');
+    addCI('m1', lwClass.branchId, m1LastWeekPast.date, `${hStart}:00`, `${hEnd}:00`);
+    mkCB(m1LastWeekPast.id, 'm1', 'attended', new Date(new Date(m1LastWeekPast.startAt).getTime() - 86400000).toISOString(), 3, true);
+    const lwBooking = db.classBookings.find((b) => b.sessionId === m1LastWeekPast.id && b.memberId === 'm1');
+    if (lwBooking) {
+      db.reviews.push({
+        id: id('rv'),
+        memberId: 'm1',
+        targetType: 'class',
+        trainerId: m1LastWeekPast.trainerId,
+        classId: m1LastWeekPast.classId,
+        bookingId: lwBooking.id,
+        rating: 5,
+        comment: 'Lớp dạy rất kỹ, giáo án vừa sức và không khí cực kỳ hào hứng!',
+        createdAt: m1LastWeekPast.endAt,
+      });
+    }
+  }
+
+  const futureSessions = db.sessions
+    .filter((s) => s.status === 'scheduled' && new Date(s.startAt).getTime() > now)
+    .sort((a, b) => a.startAt.localeCompare(b.startAt));
+
+  const tomorrow = addDays(T, 1); // Chủ nhật (nếu hôm nay Thứ 7)
+  const findFuture = (classId: string, date: string) =>
+    futureSessions.find((s) => s.classId === classId && s.date === date);
+
+  const specialFullIds = new Set<string>();
+  const m1BookedIds = new Set<string>();
+
+  // 1. Showcase NGÀY MAI (Chủ nhật) đủ mọi trạng thái:
+  // - Đã đặt: Yoga (06:30), Mobility & Giãn Cơ (14:00), Spin Cycling (17:30)
+  ['cl_yoga', 'cl_stretch', 'cl_spin'].forEach((cid, idx) => {
+    const ses = findFuture(cid, tomorrow) ?? futureSessions.find((s) => s.classId === cid && !m1BookedIds.has(s.id));
+    if (ses) {
+      m1BookedIds.add(ses.id);
+      mkCB(ses.id, 'm1', 'booked', iso(addDays(T, -1), `20:0${idx}`), 3);
+    }
+  });
+
+  // - Chờ #1 (VIP ưu tiên trước Standard): Core & Abs Blast Chủ nhật (15:30, capacity = 6)
+  const coreSun = findFuture('cl_core', tomorrow) ?? futureSessions.find((s) => s.classId === 'cl_core');
+  if (coreSun) {
+    specialFullIds.add(coreSun.id);
+    ['m2', 'm3', 'm7', 'm8', 'm9', 'm11'].forEach((mid, i) =>
+      mkCB(coreSun.id, mid, 'booked', iso(addDays(T, -1), `09:1${i}`), prio(mid)),
+    );
+    mkCB(coreSun.id, 'm12', 'waitlist', iso(T, '06:15'), prio('m12'));
+    mkCB(coreSun.id, 'm1', 'waitlist', iso(T, '08:00'), prio('m1'));
+  }
+
+  // - Kín chỗ (chờ người dùng bấm Vào chờ): HIIT Burn Chủ nhật (19:30, capacity = 4)
+  const hiitSun = findFuture('cl_hiit', tomorrow) ?? futureSessions.find((s) => s.classId === 'cl_hiit');
+  if (hiitSun) {
+    specialFullIds.add(hiitSun.id);
+    ['m2', 'm3', 'm8', 'm16'].forEach((mid, i) =>
+      mkCB(hiitSun.id, mid, 'booked', iso(addDays(T, -1), `1${i}:00`), prio(mid)),
+    );
+    mkCB(hiitSun.id, 'm12', 'waitlist', iso(T, '06:00'), prio('m12'));
+  }
+
+  // - Đã hủy: Zumba Latin Party Chủ nhật (18:30)
+  const zumbaSun = findFuture('cl_zumba', tomorrow)
+    ?? futureSessions.find((s) => s.date >= addDays(T, 2) && !specialFullIds.has(s.id) && !m1BookedIds.has(s.id));
+  if (zumbaSun) {
+    zumbaSun.status = 'cancelled';
+    zumbaSun.note = 'Bảo trì hệ thống âm thanh phòng tập đột xuất';
+  }
+
+  // 2. Showcase TUẦN KẾ TIẾP (đủ Đã đặt, Chờ #1, Kín chỗ)
+  const yogaNextWeek = futureSessions.find(
+    (s) => s.classId === 'cl_yoga' && s.date >= nextWeekMon && !m1BookedIds.has(s.id),
+  );
+  if (yogaNextWeek) {
+    m1BookedIds.add(yogaNextWeek.id);
+    mkCB(yogaNextWeek.id, 'm1', 'booked', iso(T, '10:00'), 3);
+  }
+
+  const hiitNextWeek = futureSessions.filter((s) => s.classId === 'cl_hiit' && s.date >= nextWeekMon && !specialFullIds.has(s.id));
+  if (hiitNextWeek[0]) {
+    specialFullIds.add(hiitNextWeek[0].id);
+    ['m2', 'm3', 'm8', 'm16'].forEach((mid, i) =>
+      mkCB(hiitNextWeek[0].id, mid, 'booked', iso(addDays(T, -1), `14:0${i}`), prio(mid)),
+    );
+    mkCB(hiitNextWeek[0].id, 'm12', 'waitlist', iso(T, '07:30'), prio('m12'));
+  }
+  if (hiitNextWeek[1]) {
+    specialFullIds.add(hiitNextWeek[1].id);
+    ['m2', 'm3', 'm8', 'm16'].forEach((mid, i) =>
+      mkCB(hiitNextWeek[1].id, mid, 'booked', iso(addDays(T, -1), `15:0${i}`), prio(mid)),
+    );
+    mkCB(hiitNextWeek[1].id, 'm12', 'waitlist', iso(T, '07:45'), prio('m12'));
+    mkCB(hiitNextWeek[1].id, 'm1', 'waitlist', iso(T, '09:10'), prio('m1'));
+  }
+
+  // 3. Lấp đầy ngẫu nhiên các buổi còn mở (luôn giữ >= 1 chỗ trống để hiển thị "Còn X chỗ" đa dạng)
+  const validDemoMembers = memberNames.map((x) => x[0]).filter((mid) => mid !== 'm1');
+  futureSessions.forEach((s) => {
+    if (specialFullIds.has(s.id) || s.id === zumbaSun?.id) return;
+    const c = db.classes.find((x) => x.id === s.classId)!;
+    const maxSeats = Math.max(1, c.capacity - 1);
+    const targetFill = Math.min(maxSeats, Math.max(2, Math.round(c.capacity * (0.3 + r() * 0.45))));
+    const preferred = [...classMembers[c.branchId].filter((m) => m !== 'm1'), ...validDemoMembers];
+    for (const mid of preferred) {
+      const currentCount = db.classBookings.filter((b) => b.sessionId === s.id && b.status === 'booked').length;
+      if (currentCount >= targetFill) break;
+      if (validOn(mid, s.date)) {
+        mkCB(s.id, mid, 'booked', iso(T, '07:00'), prio(mid));
+      }
+    }
+  });
 
   /* ---------------- trainer slots & PT bookings ---------------- */
   const slotTimes: Record<string, [string, string][]> = {
-    tr1: [['br1', '08:00'], ['br1', '10:00'], ['br1', '14:00'], ['br2', '16:00']],
+    tr1: [['br1', '08:00'], ['br1', '10:00'], ['br1', '14:00'], ['br2', '16:30']],
     tr2: [['br1', '08:00'], ['br1', '15:00'], ['br1', '17:00']],
     tr3: [['br2', '09:00'], ['br2', '11:00'], ['br2', '15:00']],
     tr4: [['br3', '09:00'], ['br3', '14:00'], ['br3', '16:00']],

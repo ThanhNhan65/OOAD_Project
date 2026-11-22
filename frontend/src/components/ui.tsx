@@ -167,14 +167,14 @@ export function FakeQR({ text, size = 140 }: { text: string; size?: number }) {
 
 /* ---------------- Payment gateway mô phỏng ---------------- */
 const METHODS: { id: PaymentMethod; name: string; icon: ReactNode; color: string }[] = [
-  { id: 'momo', name: 'Ví MoMo', icon: <Smartphone size={20} />, color: '#d82d8b' },
+  { id: 'ZaloPay', name: 'Ví ZaloPay', icon: <Smartphone size={20} />, color: '#d82d8b' },
   { id: 'vnpay', name: 'VNPay QR', icon: <Wallet size={20} />, color: '#0a6ebd' },
   { id: 'card', name: 'Thẻ Visa/Master', icon: <CreditCard size={20} />, color: '#7c5cff' },
   { id: 'banking', name: 'Internet Banking', icon: <Landmark size={20} />, color: '#00a37a' },
 ];
 
 export function PaymentModal({ title, amount, lines, onClose, onPay }: { title: string; amount: number; lines?: [string, string][]; onClose: () => void; onPay: (method: PaymentMethod, success: boolean) => void }) {
-  const [method, setMethod] = useState<PaymentMethod>('momo');
+  const [method, setMethod] = useState<PaymentMethod>('ZaloPay');
   const [processing, setProcessing] = useState<null | boolean>(null);
   const go = (success: boolean) => {
     setProcessing(success);

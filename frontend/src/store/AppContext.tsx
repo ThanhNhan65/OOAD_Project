@@ -2,10 +2,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react';
 import type { DB, User } from '../types';
 import { createSeed } from './seed';
-import { runScheduler, ensureMemberCards } from './logic';
+import { runScheduler, ensureMemberCards, normalizeSessions } from './logic';
 import { setAuthToken } from '../api/apiClient';
 
-const KEY = 'ooad_db_v2_hcm';
+const KEY = 'ooad_db_v4_hcm';
 const SESSION_KEY = 'ooad_session_v1';
 
 function load(): DB {
@@ -40,6 +40,7 @@ function load(): DB {
           bm.hips = 93;
         }
       });
+      normalizeSessions(parsed);
       ensureMemberCards(parsed);
       return parsed;
     }
@@ -163,6 +164,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     reset: () => {
       const fresh = createSeed();
+      normalizeSessions(fresh);
       ensureMemberCards(fresh);
       runScheduler(fresh);
       commit(fresh);

@@ -16,11 +16,9 @@ import {
   Sun,
   Sunset,
   CheckCircle2,
-  ShieldCheck,
   Sparkles,
   LayoutGrid,
   List,
-  Printer,
   Settings,
   ArrowLeft,
   ArrowRight,
@@ -37,12 +35,6 @@ import { branchesApi } from '../../api/branchesApi';
 import { getAuthToken, isApiNetworkError } from '../../api/apiClient';
 
 type PeriodKey = 'morning' | 'afternoon' | 'evening';
-
-const PERIOD_META: { key: PeriodKey; label: string; sub: string; color: string; icon: typeof Sunrise }[] = [
-  { key: 'morning', label: 'Ca Sáng', sub: '05:30 – 12:00', color: '#0284c7', icon: Sunrise },
-  { key: 'afternoon', label: 'Ca Chiều', sub: '12:00 – 17:00', color: '#d97706', icon: Sun },
-  { key: 'evening', label: 'Ca Tối', sub: '17:00 – 22:00', color: '#4f46e5', icon: Sunset },
-];
 
 function getPeriodKey(isoStart: string): PeriodKey {
   const h = new Date(isoStart).getHours();
@@ -101,18 +93,26 @@ export function shortDayMonth(dateStr: string): string {
 
 type SessionCardVM = ApiClassSessionDto & { localDate: string };
 
-/* ================= Lớp học nhóm & Thời khóa biểu dạng tuần ================= */
+/* ================= Lớp học nhóm theo danh sách tuần ================= */
+function formatMemberWeekLabel(offset: number): string {
+  const mon = getMondayStr(todayStr(), offset);
+  const sun = addDays(mon, 6);
+  const range = `${shortDayMonth(mon)} – ${fmtDate(sun)}`;
+  if (offset === 0) return `Tuần này (${range})`;
+  if (offset === -1) return `Tuần trước (${range})`;
+  if (offset === 1) return `Tuần sau (${range})`;
+  return `Tuần +${offset} (${range})`;
+}
+
 export function MemberClasses() {
   const { db, user, act, toast } = useApp();
-  const [viewMode, setViewMode] = useState<'week' | 'agenda'>('week');
-  const [weekIdx, setWeekIdx] = useState<number>(0); // -1: tuần trước, 0: tuần này, 1: tuần sau
-  const [selectedDate, setSelectedDate] = useState<string>(todayStr());
+  const [weekIdx, setWeekIdx] = useState<number>(0);
   const [branch, setBranch] = useState<string>('all');
   const [cat, setCat] = useState<string>('all');
   const [scheduleScope, setScheduleScope] = useState<'all_classes' | 'my_schedule'>('all_classes');
-  const [showEvening, setShowEvening] = useState<boolean>(true);
   const [onlyAvailable, setOnlyAvailable] = useState<boolean>(false);
   const [selId, setSelId] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   const [apiMode, setApiMode] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(false);
@@ -120,8 +120,17 @@ export function MemberClasses() {
   const [apiSessions, setApiSessions] = useState<ApiClassSessionDto[]>([]);
   const [apiSchedule, setApiSchedule] = useState<ApiMyScheduleSummaryDto | null>(null);
 
-  const monday = getMondayStr(todayStr(), weekIdx);
+  const monday = useMemo(() => getMondayStr(todayStr(), weekIdx), [weekIdx]);
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(monday, i)), [monday]);
+
+  const weekOffsets = useMemo(() => {
+    const base = [-1, 0, 1, 2, 3, 4];
+    if (!base.includes(weekIdx)) {
+      base.push(weekIdx);
+      base.sort((a, b) => a - b);
+    }
+    return base;
+  }, [weekIdx]);
 
   const loadFromApi = useCallback(async () => {
     setLoading(true);
@@ -140,6 +149,7 @@ export function MemberClasses() {
         })),
       );
       setApiSessions(sesList);
+      setNowMs(Date.now());
       setApiMode(true);
 
       if (getAuthToken()) {
@@ -164,8 +174,42 @@ export function MemberClasses() {
   }, [days, toast]);
 
   useEffect(() => {
-    loadFromApi();
-  }, [loadFromApi]);
+    let cancelled = false;
+    const from = atTime(days[0], '00:00');
+    const to = atTime(days[6], '23:59');
+
+    Promise.all([
+      branchesApi.getAll(),
+      classesApi.getSessions({ from, to }),
+      getAuthToken() ? bookingsApi.getMySchedule().catch(() => null) : Promise.resolve(null),
+    ])
+      .then(([brList, sesList, sched]) => {
+        if (cancelled) return;
+        setApiBranches(
+          brList.map((b) => ({
+            id: b.id,
+            name: b.name,
+            address: b.address || '',
+          })),
+        );
+        setApiSessions(sesList);
+        setApiSchedule(sched);
+        setNowMs(Date.now());
+        setApiMode(true);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (isApiNetworkError(err)) {
+          setApiMode(false);
+        } else {
+          toast((err as Error).message, 'error');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [days, toast]);
 
   const branchOptions = useMemo(
     () =>
@@ -175,157 +219,143 @@ export function MemberClasses() {
     [apiMode, apiBranches, db.branches],
   );
 
-  // Chuẩn hóa nguồn dữ liệu về cùng ViewModel để dùng chung cho bảng Tuần & Danh sách Ca
   const allWeekSessions: SessionCardVM[] = useMemo(() => {
-    if (apiMode) {
-      return apiSessions.map((s) => ({
-        ...s,
-        localDate: toDateStr(new Date(s.startAt)),
-      }));
-    }
+    const rawList: SessionCardVM[] = apiMode
+      ? apiSessions.map((s) => ({
+          ...s,
+          localDate: toDateStr(new Date(s.startAt)),
+        }))
+      : db.sessions
+          .filter((s) => days.includes(s.date))
+          .map((s) => {
+            const c = L.classById(db, s.classId)!;
+            const tr = L.userById(db, s.trainerId);
+            const br = L.branchById(db, c.branchId);
+            const cnt = L.bookedCount(db, s.id);
+            const wl = L.waitlistOf(db, s.id);
+            const mineBooking = db.classBookings.find(
+              (b) =>
+                b.sessionId === s.id &&
+                b.memberId === user!.id &&
+                ['booked', 'waitlist', 'attended', 'no_show'].includes(b.status),
+            );
+            const revs = db.reviews.filter((r) => r.classId === c.id);
+            const avg = revs.length ? revs.reduce((acc, r) => acc + r.rating, 0) / revs.length : 5.0;
+            const hrs = (new Date(s.startAt).getTime() - nowMs) / 3600000;
+            const wlPos = mineBooking?.status === 'waitlist' ? wl.findIndex((x) => x.id === mineBooking.id) + 1 : null;
 
-    return db.sessions
-      .filter((s) => days.includes(s.date))
-      .map((s) => {
-        const c = L.classById(db, s.classId)!;
-        const tr = L.userById(db, s.trainerId);
-        const br = L.branchById(db, c.branchId);
-        const cnt = L.bookedCount(db, s.id);
-        const wl = L.waitlistOf(db, s.id);
-        const mineBooking = db.classBookings.find(
-          (b) => b.sessionId === s.id && b.memberId === user!.id && ['booked', 'waitlist', 'attended', 'no_show'].includes(b.status),
-        );
-        const revs = db.reviews.filter((r) => r.classId === c.id);
-        const avg = revs.length ? revs.reduce((acc, r) => acc + r.rating, 0) / revs.length : 5.0;
-        const hrs = hoursUntil(s.startAt);
-        const wlPos = mineBooking?.status === 'waitlist' ? wl.findIndex((x) => x.id === mineBooking.id) + 1 : null;
+            return {
+              id: s.id,
+              classId: s.classId,
+              className: c.name,
+              category: c.category,
+              color: c.color,
+              branchId: c.branchId,
+              branchName: br?.name ?? '',
+              trainerId: s.trainerId,
+              trainerUserId: s.trainerId,
+              trainerName: tr?.fullName ?? '',
+              room: s.room,
+              capacity: c.capacity,
+              sessionDate: s.date,
+              startAt: s.startAt,
+              endAt: s.endAt,
+              durationMinutes: c.durationMin,
+              status:
+                s.status === 'cancelled'
+                  ? 'CANCELLED'
+                  : s.status === 'completed'
+                    ? 'COMPLETED'
+                    : cnt >= c.capacity
+                      ? 'FULL'
+                      : 'SCHEDULED',
+              bookedCount: cnt,
+              availableSlots: Math.max(0, c.capacity - cnt),
+              waitlistCount: wl.length,
+              attendanceConfirmed: s.attendanceConfirmed,
+              attendedCount: 0,
+              canJoinWaitlist:
+                s.status === 'scheduled' && cnt >= c.capacity && hrs > db.settings.waitlistCutoffHours,
+              hoursUntilStart: hrs,
+              averageRating: avg,
+              reviewCount: revs.length,
+              myBookingId: mineBooking?.status !== 'waitlist' ? mineBooking?.id ?? null : null,
+              myBookingStatus:
+                mineBooking?.status === 'booked'
+                  ? 'Confirmed'
+                  : mineBooking?.status === 'attended'
+                    ? 'Attended'
+                    : null,
+              myWaitlistEntryId: mineBooking?.status === 'waitlist' ? mineBooking.id : null,
+              myWaitlistPosition: wlPos,
+              localDate: s.date,
+            };
+          });
 
-        return {
-          id: s.id,
-          classId: s.classId,
-          className: c.name,
-          category: c.category,
-          color: c.color,
-          branchId: c.branchId,
-          branchName: br?.name ?? '',
-          trainerId: s.trainerId,
-          trainerUserId: s.trainerId,
-          trainerName: tr?.fullName ?? '',
-          room: s.room,
-          capacity: c.capacity,
-          sessionDate: s.date,
-          startAt: s.startAt,
-          endAt: s.endAt,
-          durationMinutes: c.durationMin,
-          status: s.status === 'cancelled' ? 'CANCELLED' : s.status === 'completed' ? 'COMPLETED' : cnt >= c.capacity ? 'FULL' : 'SCHEDULED',
-          bookedCount: cnt,
-          availableSlots: Math.max(0, c.capacity - cnt),
-          waitlistCount: wl.length,
-          attendanceConfirmed: s.attendanceConfirmed,
-          attendedCount: 0,
-          canJoinWaitlist: s.status === 'scheduled' && cnt >= c.capacity && hrs > db.settings.waitlistCutoffHours,
-          hoursUntilStart: hrs,
-          averageRating: avg,
-          reviewCount: revs.length,
-          myBookingId: mineBooking?.status !== 'waitlist' ? mineBooking?.id ?? null : null,
-          myBookingStatus: mineBooking?.status === 'booked' ? 'Confirmed' : mineBooking?.status === 'attended' ? 'Attended' : null,
-          myWaitlistEntryId: mineBooking?.status === 'waitlist' ? mineBooking.id : null,
-          myWaitlistPosition: wlPos,
-          localDate: s.date,
-        };
-      });
-  }, [apiMode, apiSessions, db, days, user]);
+    return Array.from(new Map(rawList.map((item) => [item.id, item])).values());
+  }, [apiMode, apiSessions, db, days, user, nowMs]);
 
-  const cats = useMemo(
-    () => [...new Set(allWeekSessions.map((s) => s.category).filter(Boolean))],
-    [allWeekSessions],
-  );
+  const isMySession = (s: SessionCardVM) => !!s.myBookingId || !!s.myWaitlistEntryId;
 
-  const isMySession = (s: SessionCardVM) =>
-    !!s.myBookingId || !!s.myWaitlistEntryId;
-
-  const sessions = useMemo(
+  const baseFilteredSessions = useMemo(
     () =>
       allWeekSessions
         .filter((s) => days.includes(s.localDate))
         .filter((s) => {
           if (branch !== 'all' && s.branchId !== branch) return false;
-          if (cat !== 'all' && s.category !== cat) return false;
           if (scheduleScope === 'my_schedule' && !isMySession(s)) return false;
           if (onlyAvailable && (s.bookedCount >= s.capacity || s.status === 'CANCELLED')) return false;
           return true;
         })
         .sort((a, b) => a.startAt.localeCompare(b.startAt)),
-    [allWeekSessions, days, branch, cat, scheduleScope, onlyAvailable],
+    [allWeekSessions, days, branch, scheduleScope, onlyAvailable],
   );
 
-  // Các buổi PT 1-kèm-1 trong tuần
-  const myWeekPT = useMemo(() => {
-    if (apiMode && apiSchedule) {
-      return apiSchedule.bookings
-        .filter(
-          (b) =>
-            b.type === 'PersonalTrainer' &&
-            ['Pending', 'Confirmed', 'Attended'].includes(b.status) &&
-            days.includes(toDateStr(new Date(b.startAt))) &&
-            (branch === 'all' || b.branchId === branch),
-        )
-        .map((b) => ({
-          id: b.id,
-          title: b.title,
-          branchName: b.branchName,
-          trainerName: b.trainerName,
-          note: '',
-          startAt: b.startAt,
-          endAt: b.endAt,
-          localDate: toDateStr(new Date(b.startAt)),
-          statusLabel: b.status === 'Pending' ? 'Chờ duyệt' : b.status === 'Attended' ? 'Hoàn thành' : 'Đã xác nhận',
-        }));
+  const categoryCounts = useMemo(() => {
+    const map = new Map<string, { category: string; color: string; count: number }>();
+    for (const s of baseFilteredSessions) {
+      const name = s.category || 'Khác';
+      const existing = map.get(name);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        map.set(name, { category: name, color: s.color || '#7c5cff', count: 1 });
+      }
     }
+    return Array.from(map.values()).sort((a, b) => a.category.localeCompare(b.category, 'vi'));
+  }, [baseFilteredSessions]);
 
-    return db.ptBookings
-      .filter(
-        (b) =>
-          b.memberId === user!.id &&
-          ['pending', 'confirmed', 'completed'].includes(b.status) &&
-          days.includes(toDateStr(new Date(b.startAt))) &&
-          (branch === 'all' || b.branchId === branch),
-      )
-      .map((b) => ({
-        id: b.id,
-        title: 'PT 1-kèm-1 (Cá nhân)',
-        branchName: L.branchById(db, b.branchId)?.name ?? '',
-        trainerName: L.userById(db, b.trainerId)?.fullName ?? '',
-        note: b.note,
-        startAt: b.startAt,
-        endAt: b.endAt,
-        localDate: toDateStr(new Date(b.startAt)),
-        statusLabel: ptbLabel[b.status][0],
-      }));
-  }, [apiMode, apiSchedule, db, user, days, branch]);
+  const effectiveCat = useMemo(
+    () => (cat !== 'all' && categoryCounts.some((c) => c.category === cat) ? cat : 'all'),
+    [cat, categoryCounts],
+  );
 
-  const agendaSessions = sessions.filter((s) => s.localDate === selectedDate);
+  const sessions = useMemo(
+    () =>
+      effectiveCat === 'all'
+        ? baseFilteredSessions
+        : baseFilteredSessions.filter((s) => (s.category || 'Khác') === effectiveCat),
+    [baseFilteredSessions, effectiveCat],
+  );
+
+  const activeCategoryColor =
+    effectiveCat === 'all'
+      ? 'var(--primary)'
+      : categoryCounts.find((c) => c.category === effectiveCat)?.color ?? 'var(--primary)';
+
+  const waitlistCutoff = apiMode
+    ? (apiSchedule?.waitlistCutoffHours ?? db.settings.waitlistCutoffHours)
+    : db.settings.waitlistCutoffHours;
 
   const localMembership = L.membershipOn(db, user!.id);
   const localPlan = localMembership ? L.planById(db, localMembership.planId) : undefined;
-  const localActiveBooked = db.classBookings.filter(
-    (b) => b.memberId === user!.id && ['booked', 'waitlist'].includes(b.status),
-  ).length;
-
-  const visibleSlots = showEvening ? GYM_TIME_SLOTS : GYM_TIME_SLOTS.filter((s) => !s.isEvening);
-
-  const weekOptions = [
-    { val: -1, label: `Tuần trước [từ ngày ${fmtDate(getMondayStr(todayStr(), -1))} đến ngày ${fmtDate(addDays(getMondayStr(todayStr(), -1), 6))}]` },
-    { val: 0, label: `Tuần hiện tại [từ ngày ${fmtDate(getMondayStr(todayStr(), 0))} đến ngày ${fmtDate(addDays(getMondayStr(todayStr(), 0), 6))}]` },
-    { val: 1, label: `Tuần kế tiếp [từ ngày ${fmtDate(getMondayStr(todayStr(), 1))} đến ngày ${fmtDate(addDays(getMondayStr(todayStr(), 1), 6))}]` },
-  ];
 
   const selectedSession = selId ? allWeekSessions.find((x) => x.id === selId) ?? null : null;
 
   return (
     <>
       <PageHead
-        title="Thời Khóa Biểu & Đặt Lịch Lớp Nhóm (TP.HCM)"
+        title="Đăng ký Lớp học Nhóm"
         desc={
           apiMode ? (
             apiSchedule?.activePlanName ? (
@@ -346,471 +376,338 @@ export function MemberClasses() {
           ) : localPlan ? (
             <>
               Gói <b>{localPlan.name}</b> · Hạn mức{' '}
-              <b>{localPlan.classBookingsPerWeek ? `${localPlan.classBookingsPerWeek} lớp/tuần` : 'Không giới hạn'}</b> (Đang giữ chỗ:{' '}
-              <b>{localActiveBooked}</b>) · {L.scopeLabel(db, localPlan.branchScope)}
+              <b>{localPlan.classBookingsPerWeek ? `${localPlan.classBookingsPerWeek} lớp/tuần` : 'Không giới hạn'}</b>{' '}
+              · {L.scopeLabel(db, localPlan.branchScope)} · Đóng Waitlist trước{' '}
+              <b>{db.settings.waitlistCutoffHours}h</b>
             </>
           ) : (
             'Bạn cần gói hội viên còn hiệu lực để đặt lịch lớp học nhóm.'
           )
         }
         actions={
-          <div className="row wrap" style={{ gap: 8 }}>
-            <button className="btn sm" onClick={loadFromApi} disabled={loading} title="Tải lại lịch mới nhất">
-              <RefreshCw size={14} /> {loading ? 'Đang tải...' : 'Làm mới'}
-            </button>
-            <div className="tabs" style={{ padding: 3, marginBottom: 0 }}>
-              <button className={`tab ${viewMode === 'week' ? 'on' : ''}`} onClick={() => setViewMode('week')}>
-                <LayoutGrid size={14} style={{ marginRight: 5 }} /> Thời khóa biểu dạng tuần
-              </button>
-              <button className={`tab ${viewMode === 'agenda' ? 'on' : ''}`} onClick={() => setViewMode('agenda')}>
-                <List size={14} style={{ marginRight: 5 }} /> Danh sách theo ca trong ngày
-              </button>
-            </div>
-          </div>
+          <button className="btn sm" onClick={loadFromApi} disabled={loading} title="Tải lại lịch mới nhất">
+            <RefreshCw size={14} /> {loading ? 'Đang tải...' : 'Làm mới'}
+          </button>
         }
       />
 
-      {/* CHẾ ĐỘ XEM 1: THỜI KHÓA BIỂU DẠNG TUẦN */}
-      {viewMode === 'week' && (
-        <div className="tkb-wrapper">
-          <div className="tkb-header-bar">
-            <div className="tkb-header-title">
-              <Settings size={16} color="var(--primary)" />
-              <span>THỜI KHÓA BIỂU DẠNG TUẦN – HỆ THỐNG DFGYM TP.HCM</span>
-            </div>
-            <div className="row small muted">
-              <ShieldCheck size={15} color="var(--primary)" />
-              <span>Click vào bất kỳ ô lớp học nào trên bảng để xem chi tiết & đặt chỗ</span>
-            </div>
-          </div>
+      <div className="card mb12" style={{ padding: '10px 14px' }}>
+        <div className="row between wrap mb8" style={{ gap: 8 }}>
+          <div className="row wrap" style={{ gap: 5 }}>
+            <CalendarDays size={15} color="var(--primary)" style={{ flexShrink: 0 }} />
+            <button
+              type="button"
+              className="btn sm"
+              style={{ fontSize: 12, padding: '5px 8px' }}
+              onClick={() => {
+                setWeekIdx((w) => w - 1);
+                setNowMs(Date.now());
+              }}
+              title="Tuần trước"
+              id="member-prev-week"
+            >
+              <ArrowLeft size={13} /> Trước
+            </button>
 
-          <div className="tkb-toolbar">
-            <div className="tkb-toolbar-row">
-              <select className="tkb-select" value={branch} onChange={(e) => setBranch(e.target.value)}>
-                <option value="all">Tất cả cơ sở OOAD tại TP.HCM ({branchOptions.length} chi nhánh)</option>
-                {branchOptions.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}{b.address ? ` – ${b.address.split(',').slice(-2).join(',')}` : ''}
-                  </option>
-                ))}
-              </select>
+            <select
+              className="input sm"
+              style={{ width: 'auto', minWidth: 195, fontSize: 12.5, padding: '5px 9px' }}
+              value={weekIdx}
+              onChange={(e) => {
+                setWeekIdx(Number(e.target.value));
+                setNowMs(Date.now());
+              }}
+              id="member-week-select"
+            >
+              {weekOffsets.map((offset) => (
+                <option key={offset} value={offset}>
+                  {formatMemberWeekLabel(offset)}
+                </option>
+              ))}
+            </select>
 
-              <select
-                className="tkb-select"
-                value={scheduleScope}
-                onChange={(e) => setScheduleScope(e.target.value as 'all_classes' | 'my_schedule')}
-              >
-                <option value="all_classes">Thời khóa biểu toàn trung tâm (Tất cả lớp nhóm)</option>
-                <option value="my_schedule">Thời khóa biểu cá nhân (Lớp đã đăng ký & PT của tôi)</option>
-              </select>
+            <button
+              type="button"
+              className="btn sm"
+              style={{ fontSize: 12, padding: '5px 9px' }}
+              disabled={weekIdx === 0}
+              onClick={() => {
+                setWeekIdx(0);
+                setNowMs(Date.now());
+              }}
+              id="member-this-week"
+            >
+              Tuần này
+            </button>
 
-              <select className="tkb-select" value={cat} onChange={(e) => setCat(e.target.value)} style={{ minWidth: 190 }}>
-                <option value="all">Bộ môn: Tất cả bộ môn</option>
-                {cats.map((c) => (
-                  <option key={c} value={c}>
-                    Bộ môn: {c}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <button
+              type="button"
+              className="btn sm"
+              style={{ fontSize: 12, padding: '5px 8px' }}
+              onClick={() => {
+                setWeekIdx((w) => w + 1);
+                setNowMs(Date.now());
+              }}
+              title="Tuần sau"
+              id="member-next-week"
+            >
+              Sau <ArrowRight size={13} />
+            </button>
 
-            <div className="tkb-toolbar-row">
-              <select
-                className="tkb-select"
-                style={{ minWidth: 340 }}
-                value={weekIdx}
-                onChange={(e) => setWeekIdx(Number(e.target.value))}
-              >
-                {weekOptions.map((w) => (
-                  <option key={w.val} value={w.val}>
-                    {w.label}
-                  </option>
-                ))}
-              </select>
-
-              <button className="btn sm" onClick={() => window.print()}>
-                <Printer size={14} /> In thời khóa biểu
-              </button>
-
-              <label className="check small bold">
-                <input type="checkbox" checked={showEvening} onChange={(e) => setShowEvening(e.target.checked)} />
-                <span>Thời khóa biểu tối (sau 17:00)</span>
-              </label>
-
-              <label className="check small bold">
-                <input type="checkbox" checked={onlyAvailable} onChange={(e) => setOnlyAvailable(e.target.checked)} />
-                <span>Chỉ lớp còn chỗ</span>
-              </label>
-
-              <div className="tkb-legend" style={{ marginLeft: 'auto' }}>
-                <span className="tkb-legend-item">
-                  <span className="tkb-swatch" style={{ background: '#38bdf8' }} /> Lớp mở đăng ký
-                </span>
-                <span className="tkb-legend-item">
-                  <span className="tkb-swatch" style={{ background: '#10b981' }} /> Đã đăng ký
-                </span>
-                <span className="tkb-legend-item">
-                  <span className="tkb-swatch" style={{ background: '#a855f7' }} /> Lịch PT 1-kèm-1
-                </span>
-                <span className="tkb-legend-item">
-                  <span className="tkb-swatch" style={{ background: '#f59e0b' }} /> Kín chỗ / Chờ
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="tkb-table-scroll">
-            <table className="tkb-table">
-              <thead>
-                <tr>
-                  <th className="tkb-nav-col">
-                    <button
-                      type="button"
-                      className="tkb-nav-btn"
-                      onClick={() => setWeekIdx((w) => Math.max(-1, w - 1))}
-                      disabled={weekIdx <= -1}
-                      title="Tuần trước"
-                    >
-                      <ArrowLeft size={15} />
-                    </button>
-                  </th>
-                  {days.map((d) => {
-                    const isToday = d === todayStr();
-                    return (
-                      <th key={d} className={isToday ? 'is-today' : ''}>
-                        <span>{fullDayName(d)}</span>
-                        <span className="tkb-day-sub">({shortDayMonth(d)})</span>
-                      </th>
-                    );
-                  })}
-                  <th className="tkb-nav-col">
-                    <button
-                      type="button"
-                      className="tkb-nav-btn"
-                      onClick={() => setWeekIdx((w) => Math.min(1, w + 1))}
-                      disabled={weekIdx >= 1}
-                      title="Tuần kế tiếp"
-                    >
-                      <ArrowRight size={15} />
-                    </button>
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {visibleSlots.map((slotDef) => (
-                  <tr key={slotDef.id}>
-                    <td className="tkb-slot-cell">
-                      <div className="tkb-slot-badge">{slotDef.label}</div>
-                    </td>
-
-                    {days.map((d) => {
-                      const isToday = d === todayStr();
-                      const cellSessions = sessions.filter(
-                        (s) => s.localDate === d && matchSlotId(s.startAt) === slotDef.id,
-                      );
-                      const cellPTs = myWeekPT.filter(
-                        (b) => b.localDate === d && matchSlotId(b.startAt) === slotDef.id,
-                      );
-
-                      return (
-                        <td key={`${slotDef.id}-${d}`} className={`tkb-data-cell ${isToday ? 'is-today-col' : ''}`}>
-                          {cellSessions.map((s) => {
-                            const full = s.bookedCount >= s.capacity;
-                            const isCancelled = s.status === 'CANCELLED';
-                            const mine = isMySession(s);
-
-                            return (
-                              <div
-                                key={s.id}
-                                className={`tkb-event ${mine ? 'is-mine' : full ? 'is-full' : ''}`}
-                                style={{
-                                  ['--ev-color' as string]: s.color,
-                                  opacity: isCancelled ? 0.55 : 1,
-                                }}
-                                onClick={() => setSelId(s.id)}
-                                id={`session-${s.id}`}
-                              >
-                                <div className="tkb-ev-title">{s.className}</div>
-                                <div className="tkb-ev-line">Cơ sở: {s.branchName}</div>
-                                <div className="tkb-ev-line">
-                                  Phòng: {s.room} ({s.bookedCount}/{s.capacity})
-                                </div>
-                                <div className="tkb-ev-line">HLV: {s.trainerName}</div>
-                                <div className="tkb-ev-time">
-                                  <span>
-                                    🕒 {fmtTime(s.startAt)} → {fmtTime(s.endAt)}
-                                  </span>
-                                  {isCancelled ? (
-                                    <span className="tkb-ev-tag" style={{ background: 'rgba(239,68,68,0.2)', color: '#f87171' }}>
-                                      Đã hủy
-                                    </span>
-                                  ) : s.myWaitlistEntryId ? (
-                                    <span className="tkb-ev-tag">Chờ #{s.myWaitlistPosition ?? ''}</span>
-                                  ) : s.myBookingId ? (
-                                    <span className="tkb-ev-tag">✓ Đã đặt</span>
-                                  ) : full ? (
-                                    <span className="tkb-ev-tag" style={{ background: 'rgba(245,158,11,0.25)', color: '#fbbf24' }}>
-                                      Kín chỗ
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </div>
-                            );
-                          })}
-
-                          {cellPTs.map((pt) => (
-                            <div key={pt.id} className="tkb-event is-pt">
-                              <div className="tkb-ev-title">{pt.title}</div>
-                              <div className="tkb-ev-line">Cơ sở: {pt.branchName}</div>
-                              <div className="tkb-ev-line">HLV: {pt.trainerName}</div>
-                              {pt.note && <div className="tkb-ev-line">Mục tiêu: {pt.note}</div>}
-                              <div className="tkb-ev-time">
-                                <span>
-                                  🕒 {fmtTime(pt.startAt)} → {fmtTime(pt.endAt)}
-                                </span>
-                                <span className="tkb-ev-tag">{pt.statusLabel}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </td>
-                      );
-                    })}
-
-                    <td className="tkb-time-cell">
-                      <div className="tkb-time-badge">{slotDef.timeLabel}</div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-
-              <tfoot>
-                <tr>
-                  <th className="tkb-nav-col">
-                    <button
-                      type="button"
-                      className="tkb-nav-btn"
-                      onClick={() => setWeekIdx((w) => Math.max(-1, w - 1))}
-                      disabled={weekIdx <= -1}
-                    >
-                      <ArrowLeft size={15} />
-                    </button>
-                  </th>
-                  {days.map((d) => {
-                    const isToday = d === todayStr();
-                    return (
-                      <th key={d} className={isToday ? 'is-today' : ''}>
-                        <span>{fullDayName(d)}</span>
-                        <span className="tkb-day-sub">({shortDayMonth(d)})</span>
-                      </th>
-                    );
-                  })}
-                  <th className="tkb-nav-col">
-                    <button
-                      type="button"
-                      className="tkb-nav-btn"
-                      onClick={() => setWeekIdx((w) => Math.min(1, w + 1))}
-                      disabled={weekIdx >= 1}
-                    >
-                      <ArrowRight size={15} />
-                    </button>
-                  </th>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* CHẾ ĐỘ XEM 2: THEO CA TRONG NGÀY (SÁNG / CHIỀU / TỐI) */}
-      {viewMode === 'agenda' && (
-        <>
-          <div className="card mb16" style={{ padding: '14px 16px' }}>
-            <div className="row between wrap mb12" style={{ gap: 12 }}>
-              <div className="small bold muted">Chọn ngày trong tuần ({fmtDate(days[0])} – {fmtDate(days[6])}):</div>
-              <div className="row" style={{ gap: 8 }}>
-                <button
-                  className="btn sm"
-                  onClick={() => {
-                    setWeekIdx(0);
-                    setSelectedDate(todayStr());
-                  }}
-                >
-                  Hôm nay
-                </button>
-                <button
-                  className="btn sm"
-                  onClick={() => {
-                    setWeekIdx(0);
-                    setSelectedDate(addDays(todayStr(), 1));
-                  }}
-                >
-                  Ngày mai
-                </button>
-              </div>
-            </div>
-
-            <div className="day-strip">
-              {days.map((d) => {
-                const isSelected = d === selectedDate;
-                const isToday = d === todayStr();
-                const daySessions = sessions.filter((s) => s.localDate === d);
-                const hasMine = daySessions.some((s) => isMySession(s));
-                const dateObj = parseDate(d);
-
-                return (
-                  <button
-                    key={d}
-                    type="button"
-                    onClick={() => setSelectedDate(d)}
-                    className={`day-pill ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''}`}
-                  >
-                    <div className="small muted">{isToday ? 'Hôm nay' : WEEKDAYS[dateObj.getDay()]}</div>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: isSelected ? 'var(--primary)' : 'var(--text)' }}>
-                      {dateObj.getDate()}/{dateObj.getMonth() + 1}
-                    </div>
-                    <div className="small dim" style={{ fontSize: 11 }}>
-                      {daySessions.length > 0 ? `${daySessions.length} lớp` : 'Nghỉ'}
-                      {hasMine ? ' · ✓' : ''}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="card mb20" style={{ padding: '12px 16px' }}>
-            <div className="row wrap between" style={{ gap: 12 }}>
-              <div className="chips">
-                <button className={`chip ${branch === 'all' ? 'on' : ''}`} onClick={() => setBranch('all')}>
-                  Tất cả chi nhánh
-                </button>
-                {branchOptions.map((b) => (
-                  <button key={b.id} className={`chip ${branch === b.id ? 'on' : ''}`} onClick={() => setBranch(b.id)}>
-                    {b.name.replace('DF Gym Center - ', '').replace('OOAD ', '')}
-                  </button>
-                ))}
-              </div>
-              <div className="chips">
-                <button className={`chip ${cat === 'all' ? 'on' : ''}`} onClick={() => setCat('all')}>
-                  Mọi bộ môn
-                </button>
-                {cats.map((c) => (
-                  <button key={c} className={`chip ${cat === c ? 'on' : ''}`} onClick={() => setCat(c)}>
-                    {c}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="col" style={{ gap: 20 }}>
-            {agendaSessions.length === 0 ? (
-              <div className="card" style={{ padding: 40, textAlign: 'center' }}>
-                <Empty text="Không có lớp học nào trong ngày này phù hợp với bộ lọc." icon={<CalendarDays size={38} />} />
-              </div>
-            ) : (
-              PERIOD_META.map((period) => {
-                const pList = agendaSessions.filter((s) => getPeriodKey(s.startAt) === period.key);
-                if (pList.length === 0) return null;
-                const PIcon = period.icon;
-                return (
-                  <div key={period.key} className="col" style={{ gap: 12 }}>
-                    <div className="period-header">
-                      <div className="row" style={{ gap: 10 }}>
-                        <PIcon size={18} color={period.color} />
-                        <span className="bold" style={{ fontSize: 14.5 }}>
-                          {period.label} ({period.sub})
-                        </span>
-                      </div>
-                      <Badge color="purple" plain>
-                        {pList.length} lớp
-                      </Badge>
-                    </div>
-
-                    <div className="grid g2" style={{ gap: 14 }}>
-                      {pList.map((s) => {
-                        const full = s.bookedCount >= s.capacity;
-                        const past = new Date(s.startAt).getTime() < Date.now();
-                        const fillPercent = Math.min(100, Math.round((s.bookedCount / s.capacity) * 100));
-
-                        return (
-                          <div
-                            key={s.id}
-                            className="card hover"
-                            style={{
-                              borderLeft: `5px solid ${s.color}`,
-                              padding: 16,
-                              display: 'flex',
-                              flexDirection: 'column',
-                              justifyContent: 'space-between',
-                              gap: 12,
-                              opacity: past && s.status !== 'CANCELLED' ? 0.65 : 1,
-                            }}
-                            onClick={() => setSelId(s.id)}
-                          >
-                            <div>
-                              <div className="row between wrap mb8" style={{ gap: 8 }}>
-                                <div className="row" style={{ gap: 8 }}>
-                                  <span style={{ fontSize: 15, fontWeight: 800, color: s.color }}>
-                                    {fmtTime(s.startAt)} – {fmtTime(s.endAt)}
-                                  </span>
-                                  <span className="small dim">({s.durationMinutes} phút)</span>
-                                </div>
-                                <div className="row" style={{ gap: 6 }}>
-                                  <Badge color="purple" plain>
-                                    {s.category}
-                                  </Badge>
-                                  {s.status === 'CANCELLED' ? (
-                                    <Badge color="red">Đã hủy</Badge>
-                                  ) : s.myWaitlistEntryId ? (
-                                    <Badge color="amber">Đang chờ #{s.myWaitlistPosition ?? ''}</Badge>
-                                  ) : s.myBookingId ? (
-                                    <Badge color="green">✓ Đã đặt chỗ</Badge>
-                                  ) : full ? (
-                                    <Badge color="amber">Kín chỗ ({s.waitlistCount} chờ)</Badge>
-                                  ) : (
-                                    <Badge color="green">Còn {s.availableSlots} chỗ</Badge>
-                                  )}
-                                </div>
-                              </div>
-
-                              <h3 style={{ fontSize: 16, marginBottom: 6 }}>{s.className}</h3>
-
-                              <div className="row between wrap small muted" style={{ gap: 8 }}>
-                                <div className="row" style={{ gap: 7 }}>
-                                  <Avatar user={{ fullName: s.trainerName || 'HLV', avatarColor: s.color }} size="sm" />
-                                  <span style={{ fontWeight: 600, color: 'var(--text)' }}>HLV {s.trainerName}</span>
-                                </div>
-                                <div className="row" style={{ gap: 5 }}>
-                                  <MapPin size={13} className="dim" />
-                                  <span>
-                                    {s.room} · {s.branchName}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div style={{ paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                              <div className="row between small mb6">
-                                <span className="dim">Sĩ số lớp:</span>
-                                <span style={{ fontWeight: 700 }}>
-                                  {s.bookedCount}/{s.capacity} học viên ({fillPercent}%)
-                                </span>
-                              </div>
-                              <Progress value={fillPercent} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })
+            {loading && (
+              <span className="small muted" style={{ fontSize: 11.5, marginLeft: 4 }}>
+                Đang tải...
+              </span>
             )}
           </div>
-        </>
-      )}
+
+          <div className="row wrap" style={{ gap: 8 }}>
+            <select
+              className="input sm"
+              style={{ width: 'auto', maxWidth: 210, fontSize: 12.5, padding: '5px 9px' }}
+              value={branch}
+              onChange={(e) => setBranch(e.target.value)}
+              id="member-branch-filter"
+            >
+              <option value="all">Tất cả chi nhánh ({branchOptions.length})</option>
+              {branchOptions.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              className="input sm"
+              style={{ width: 'auto', fontSize: 12.5, padding: '5px 9px' }}
+              value={scheduleScope}
+              onChange={(e) => setScheduleScope(e.target.value as 'all_classes' | 'my_schedule')}
+              id="member-scope-filter"
+            >
+              <option value="all_classes">Tất cả lớp</option>
+              <option value="my_schedule">Lớp tôi đã đặt</option>
+            </select>
+
+            <label className="check small bold" style={{ fontSize: 12.5 }}>
+              <input
+                type="checkbox"
+                checked={onlyAvailable}
+                onChange={(e) => setOnlyAvailable(e.target.checked)}
+              />
+              <span>Chỉ lớp còn chỗ</span>
+            </label>
+          </div>
+        </div>
+
+        <div className="row wrap" style={{ gap: 6, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+          <span className="small muted bold" style={{ fontSize: 12 }}>Bộ môn:</span>
+          <div className="chips">
+            <button
+              type="button"
+              className={`chip ${effectiveCat === 'all' ? 'on' : ''}`}
+              style={{ fontSize: 11.5, padding: '4px 10px' }}
+              onClick={() => setCat('all')}
+              id="member-cat-all"
+            >
+              Tất cả ({baseFilteredSessions.length})
+            </button>
+            {categoryCounts.map((c) => (
+              <button
+                type="button"
+                key={c.category}
+                className={`chip ${effectiveCat === c.category ? 'on' : ''}`}
+                style={{ fontSize: 11.5, padding: '4px 10px' }}
+                onClick={() => setCat(c.category)}
+                id={`member-cat-${c.category}`}
+              >
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: 99,
+                    background: c.color,
+                    display: 'inline-block',
+                    marginRight: 4,
+                  }}
+                />
+                {c.category} ({c.count})
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="card"
+        style={{
+          padding: '12px 14px',
+          borderLeft: effectiveCat === 'all' ? undefined : `4px solid ${activeCategoryColor}`,
+        }}
+      >
+        <div className="row between mb12" style={{ gap: 8 }}>
+          <div className="row" style={{ gap: 8 }}>
+            <span
+              style={{
+                width: 9,
+                height: 9,
+                borderRadius: 3,
+                background: activeCategoryColor,
+                display: 'inline-block',
+              }}
+            />
+            <h2 style={{ margin: 0, fontSize: 14 }}>
+              {effectiveCat === 'all'
+                ? 'Danh sách lớp học nhóm — Tất cả bộ môn'
+                : `Bộ môn: ${effectiveCat}`}
+            </h2>
+          </div>
+          <span className="small muted" style={{ fontSize: 12 }}>
+            <b>{sessions.length}</b> buổi trong tuần
+          </span>
+        </div>
+
+        {sessions.length === 0 ? (
+          <div style={{ padding: 24 }}>
+            <Empty
+              text="Không có lớp học nào trong tuần này phù hợp bộ lọc."
+              icon={<CalendarDays size={36} />}
+            />
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="admin-compact-table">
+              <thead>
+                <tr>
+                  <th>Lớp học</th>
+                  <th>Thời gian</th>
+                  <th>Địa điểm &amp; HLV</th>
+                  <th>Sĩ số</th>
+                  <th>Trạng thái</th>
+                  <th style={{ textAlign: 'right' }}>Thao tác</th>
+                </tr>
+              </thead>
+              <tbody key={`${effectiveCat}-${branch}-${weekIdx}-${scheduleScope}-${onlyAvailable}`}>
+                {sessions.map((s) => {
+                  const full = s.bookedCount >= s.capacity;
+                  const isCancelled = s.status === 'CANCELLED';
+                  const isCompleted = s.status === 'COMPLETED';
+                  const past = new Date(s.startAt).getTime() <= nowMs;
+                  const hrs = (new Date(s.startAt).getTime() - nowMs) / 3600000;
+                  const hasConfirmed = !!s.myBookingId && s.myBookingStatus === 'Confirmed';
+                  const hasWaitlist = !!s.myWaitlistEntryId;
+                  const startDateObj = new Date(s.startAt);
+                  const dateLabel = `${WEEKDAYS[startDateObj.getDay()]}, ${shortDayMonth(s.localDate)}`;
+
+                  let actionLabel = 'Đăng ký';
+                  let actionClass = 'btn sm primary xs';
+                  if (hasConfirmed && !past) {
+                    actionLabel = 'Chi tiết';
+                    actionClass = 'btn sm xs';
+                  } else if (hasWaitlist && !past) {
+                    actionLabel = 'Xem chờ / Rời';
+                    actionClass = 'btn sm xs';
+                  } else if (isCancelled || past || isCompleted || !!s.myBookingId) {
+                    actionLabel = 'Chi tiết';
+                    actionClass = 'btn sm ghost xs';
+                  } else if (full && hrs <= waitlistCutoff) {
+                    actionLabel = 'Đã kín';
+                    actionClass = 'btn sm ghost xs';
+                  } else if (full) {
+                    actionLabel = 'Vào chờ';
+                    actionClass = 'btn sm xs';
+                  }
+
+                  return (
+                    <tr
+                      key={s.id}
+                      id={`session-${s.id}`}
+                      onClick={() => setSelId(s.id)}
+                      style={{
+                        cursor: 'pointer',
+                        opacity: isCancelled || (past && !hasConfirmed) ? 0.65 : 1,
+                      }}
+                    >
+                      <td>
+                        <div className="row" style={{ gap: 6 }}>
+                          <span
+                            style={{
+                              width: 7,
+                              height: 7,
+                              borderRadius: 2,
+                              background: s.color,
+                              flexShrink: 0,
+                            }}
+                          />
+                          <b>{s.className}</b>
+                        </div>
+                        <div style={{ marginTop: 3 }}>
+                          <Badge color="purple" plain>
+                            {s.category || 'Khác'}
+                          </Badge>
+                        </div>
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <div className="bold">{dateLabel}</div>
+                        <div className="muted" style={{ fontSize: 11.5 }}>
+                          {fmtTime(s.startAt)} – {fmtTime(s.endAt)} ({s.durationMinutes}p)
+                        </div>
+                      </td>
+                      <td>
+                        <div>
+                          {s.room} · {s.branchName}
+                        </div>
+                        <div className="muted" style={{ fontSize: 11.5 }}>
+                          HLV: {s.trainerName}
+                        </div>
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <Badge color={full ? 'amber' : 'green'}>
+                          {s.bookedCount}/{s.capacity}
+                        </Badge>
+                        {s.waitlistCount > 0 && (
+                          <div className="dim" style={{ fontSize: 11, marginTop: 2 }}>
+                            +{s.waitlistCount} chờ
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {isCancelled ? (
+                          <Badge color="red">Đã hủy</Badge>
+                        ) : s.myBookingStatus === 'Attended' ? (
+                          <Badge color="blue">Đã tham gia</Badge>
+                        ) : hasWaitlist ? (
+                          <Badge color="amber">Chờ #{s.myWaitlistPosition ?? ''}</Badge>
+                        ) : s.myBookingId ? (
+                          <Badge color="green">✓ Đã đặt</Badge>
+                        ) : past || isCompleted ? (
+                          <Badge color="gray">Đã qua</Badge>
+                        ) : full ? (
+                          <Badge color="amber">Kín chỗ</Badge>
+                        ) : (
+                          <Badge color="green">Còn {s.availableSlots} chỗ</Badge>
+                        )}
+                      </td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <button
+                          type="button"
+                          className={actionClass}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelId(s.id);
+                          }}
+                          id={`session-action-${s.id}`}
+                        >
+                          {actionLabel}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {selectedSession && (
         <SessionModal
@@ -820,6 +717,8 @@ export function MemberClasses() {
           onChanged={async () => {
             if (apiMode) {
               await loadFromApi();
+            } else {
+              setNowMs(Date.now());
             }
           }}
           onLocalBook={() => act((d) => L.bookClass(d, user!.id, selectedSession.id))}

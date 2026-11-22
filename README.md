@@ -97,7 +97,7 @@ OOAD/                             ← 🏠 Root của toàn bộ project
 │       │   │       ├── ICurrentUserService.cs     ← Lấy UserId đang đăng nhập từ JWT claim
 │       │   │       ├── IDateTimeService.cs        ← Cung cấp Now() — dễ mock khi test
 │       │   │       ├── IEmailService.cs           ← Gửi email (SendGrid, SMTP...)
-│       │   │       ├── IPaymentGatewayService.cs  ← Kết nối cổng thanh toán (VNPay, Momo...)
+│       │   │       ├── IPaymentGatewayService.cs  ← Kết nối cổng thanh toán (VNPay, ZaloPay...)
 │       │   │       └── ITokenService.cs           ← Tạo & validate JWT token
 │       │   ├── DTOs/                      ← 📋 Data Transfer Objects — request/response qua API
 │       │   │   ├── Branch/

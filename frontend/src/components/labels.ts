@@ -62,7 +62,7 @@ export const reqLabel: Record<RequestStatus, L> = {
 };
 
 export const methodLabel: Record<PaymentMethod, string> = {
-  momo: 'Ví MoMo',
+  ZaloPay: 'Ví ZaloPay',
   vnpay: 'VNPay',
   card: 'Thẻ quốc tế',
   banking: 'Internet Banking',

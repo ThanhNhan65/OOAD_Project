@@ -74,7 +74,7 @@ export interface FreezeRequest {
   note?: string;
 }
 
-export type PaymentMethod = 'momo' | 'vnpay' | 'card' | 'banking';
+export type PaymentMethod = 'ZaloPay' | 'vnpay' | 'card' | 'banking';
 
 export interface Payment {
   id: string;

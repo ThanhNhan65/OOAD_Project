@@ -27,6 +27,7 @@ import {
   weekStart,
   fmtDateTime,
   fmtDate,
+  fmtTime,
   toDateStr,
   parseDate,
 } from '../utils';
@@ -696,8 +697,54 @@ export function handleFreeze(db: DB, reqId: string, staffId: string, approve: bo
 /* ------------------------------------------------------------------ */
 /*  Classes & sessions                                                 */
 /* ------------------------------------------------------------------ */
+export function normalizeSessions(db: DB): void {
+  const bookedIds = new Set(db.classBookings.map((b) => b.sessionId));
+  const bySlot = new Map<string, ClassSession>();
+
+  // 1. Gộp các buổi học trùng hệt nhau (classId + date + startAt), ưu tiên giữ bản ghi đã có booking
+  for (const s of db.sessions) {
+    const slotKey = `${s.classId}|${s.date}|${s.startAt}`;
+    const existing = bySlot.get(slotKey);
+    if (!existing || (!bookedIds.has(existing.id) && bookedIds.has(s.id))) {
+      bySlot.set(slotKey, s);
+    }
+  }
+
+  // 2. Đảm bảo mỗi buổi học còn lại đều có id duy nhất
+  const usedIds = new Set<string>();
+  const normalized: ClassSession[] = [];
+  for (const s of bySlot.values()) {
+    if (!usedIds.has(s.id)) {
+      usedIds.add(s.id);
+      normalized.push(s);
+      continue;
+    }
+
+    const oldId = s.id;
+    let nextId = uid('ses');
+    while (usedIds.has(nextId)) {
+      nextId = uid('ses');
+    }
+    usedIds.add(nextId);
+    s.id = nextId;
+    normalized.push(s);
+
+    // Chỉ remap booking nếu có đúng 1 buổi không trùng nghĩa trỏ về oldId và buổi đầu tiên không dùng booking đó
+    const matchingBookings = db.classBookings.filter((b) => b.sessionId === oldId);
+    const firstWithOldId = normalized.find((x) => x !== s && x.id === oldId);
+    if (matchingBookings.length > 0 && !firstWithOldId) {
+      matchingBookings.forEach((b) => {
+        b.sessionId = nextId;
+      });
+    }
+  }
+
+  db.sessions = normalized;
+}
+
 export function ensureSessions(db: DB, fromOffset = 0, toOffset = 14) {
   const today = todayStr();
+  const usedIds = new Set(db.sessions.map((s) => s.id));
   for (const c of db.classes) {
     if (!c.active) continue;
     for (let i = fromOffset; i <= toOffset; i++) {
@@ -705,8 +752,13 @@ export function ensureSessions(db: DB, fromOffset = 0, toOffset = 14) {
       if (!c.daysOfWeek.includes(parseDate(date).getDay())) continue;
       if (db.sessions.some((s) => s.classId === c.id && s.date === date)) continue;
       const startAt = atTime(date, c.startTime);
+      let sessionId = `ses_${c.id}_${date}`;
+      while (usedIds.has(sessionId)) {
+        sessionId = uid('ses');
+      }
+      usedIds.add(sessionId);
       db.sessions.push({
-        id: `ses_${c.id}_${date}`,
+        id: sessionId,
         classId: c.id,
         date,
         startAt,
@@ -849,15 +901,59 @@ function generateFutureSessions(db: DB, c: GroupClass) {
   ensureSessions(db);
 }
 
-export function saveClass(db: DB, data: GroupClass) {
-  const idx = db.classes.findIndex((c) => c.id === data.id);
-  const prev = idx >= 0 ? db.classes[idx] : undefined;
-  if (idx >= 0) db.classes[idx] = data;
-  else db.classes.push(data);
-  generateFutureSessions(db, data);
-  if (!prev || prev.trainerId !== data.trainerId) {
-    notify(db, data.trainerId, 'Bạn được phân công lớp mới', `Lớp ${data.name} – ${branchById(db, data.branchId)?.name}, ${data.startTime} (${data.durationMin} phút).`, 'info', '/trainer/classes');
+function isoRangesOverlap(startA: string, endA: string, startB: string, endB: string): boolean {
+  return new Date(startA).getTime() < new Date(endB).getTime() && new Date(startB).getTime() < new Date(endA).getTime();
+}
+
+function clockToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function clockRangesOverlap(startA: string, durA: number, startB: string, durB: number): boolean {
+  const sA = clockToMinutes(startA);
+  const eA = sA + durA;
+  const sB = clockToMinutes(startB);
+  const eB = sB + durB;
+  return sA < eB && sB < eA;
+}
+
+export function saveClass(db: DB, data: GroupClass): boolean {
+  const cleanName = data.name.trim();
+  const cleanRoom = data.room.trim();
+  if (!cleanName) fail('Tên lớp học không được để trống');
+  if (!cleanRoom) fail('Phòng tập không được để trống');
+  if (data.daysOfWeek.length === 0) fail('Vui lòng chọn ít nhất một ngày trong tuần');
+  if (data.capacity <= 0) fail('Sĩ số tối đa phải lớn hơn 0');
+  if (data.durationMin < 15) fail('Thời lượng lớp học tối thiểu 15 phút');
+
+  for (const other of db.classes) {
+    if (other.id === data.id || !other.active) continue;
+    const sharesDay = other.daysOfWeek.some((day) => data.daysOfWeek.includes(day));
+    if (!sharesDay || !clockRangesOverlap(data.startTime, data.durationMin, other.startTime, other.durationMin)) {
+      continue;
+    }
+
+    if (other.branchId === data.branchId && other.room.trim().toLowerCase() === cleanRoom.toLowerCase()) {
+      fail(`Phòng '${cleanRoom}' bị trùng lịch với lớp '${other.name}' (${other.startTime}).`);
+    }
+
+    if (other.trainerId === data.trainerId) {
+      const trName = userById(db, data.trainerId)?.fullName ?? 'HLV';
+      fail(`Huấn luyện viên ${trName} đã có lớp '${other.name}' (${other.startTime}) trùng khung giờ.`);
+    }
   }
+
+  const normalized: GroupClass = { ...data, name: cleanName, room: cleanRoom };
+  const idx = db.classes.findIndex((c) => c.id === normalized.id);
+  const prev = idx >= 0 ? db.classes[idx] : undefined;
+  if (idx >= 0) db.classes[idx] = normalized;
+  else db.classes.push(normalized);
+  generateFutureSessions(db, normalized);
+  if (!prev || prev.trainerId !== normalized.trainerId) {
+    notify(db, normalized.trainerId, 'Bạn được phân công lớp mới', `Lớp ${normalized.name} – ${branchById(db, normalized.branchId)?.name}, ${normalized.startTime} (${normalized.durationMin} phút).`, 'info', '/trainer/classes');
+  }
+  return true;
 }
 
 export function deleteClass(db: DB, classId: string) {
@@ -883,22 +979,65 @@ export function cancelSession(db: DB, sessionId: string, reason: string) {
   notify(db, s.trainerId, 'Buổi dạy bị hủy', `Buổi ${c.name} lúc ${fmtDateTime(s.startAt)} đã bị hủy. ${reason}`, 'warning', '/trainer/classes');
 }
 
-export function rescheduleSession(db: DB, sessionId: string, date: string, time: string, room: string, trainerId: string) {
+export function rescheduleSession(db: DB, sessionId: string, date: string, time: string, room: string, trainerId: string): boolean {
   const s = sessionById(db, sessionId) ?? fail('Không tìm thấy buổi học');
+  if (s.status !== 'scheduled') fail('Không thể đổi lịch buổi học đã hủy hoặc đã hoàn thành');
   const c = classById(db, s.classId)!;
+  const cleanRoom = room.trim();
+  if (!cleanRoom) fail('Vui lòng nhập hoặc chọn phòng tập');
+  if (!trainerId) fail('Vui lòng chọn huấn luyện viên phụ trách');
+
+  const newStart = atTime(date, time);
+  if (Number.isNaN(new Date(newStart).getTime()) || new Date(newStart).getTime() <= Date.now()) {
+    fail('Thời gian học mới phải nằm ở tương lai');
+  }
+  const newEnd = new Date(new Date(newStart).getTime() + c.durationMin * 60000).toISOString();
+
+  for (const x of db.sessions) {
+    if (x.id === s.id || x.status === 'cancelled') continue;
+    if (!isoRangesOverlap(newStart, newEnd, x.startAt, x.endAt)) continue;
+
+    if (x.classId === s.classId) {
+      fail(`Lớp '${c.name}' đã có buổi học khác trùng khung giờ này.`);
+    }
+
+    const otherClass = classById(db, x.classId);
+    if (otherClass?.branchId === c.branchId && x.room.trim().toLowerCase() === cleanRoom.toLowerCase()) {
+      fail(`Phòng '${cleanRoom}' tại ${branchById(db, c.branchId)?.name ?? 'chi nhánh'} đã có lớp '${otherClass.name}' (${fmtTime(x.startAt)}–${fmtTime(x.endAt)}) trùng khung giờ.`);
+    }
+
+    if (x.trainerId === trainerId) {
+      const trName = userById(db, trainerId)?.fullName ?? 'HLV';
+      const otherBranchName = otherClass ? branchById(db, otherClass.branchId)?.name ?? '' : '';
+      fail(`Huấn luyện viên ${trName} đã có lịch dạy lớp '${otherClass?.name ?? ''}'${otherBranchName ? ` tại ${otherBranchName}` : ''} (${fmtTime(x.startAt)}–${fmtTime(x.endAt)}) trùng khung giờ.`);
+    }
+  }
+
+  const ptConflict = db.ptBookings.find(
+    (b) =>
+      b.trainerId === trainerId &&
+      ['pending', 'confirmed'].includes(b.status) &&
+      isoRangesOverlap(newStart, newEnd, b.startAt, b.endAt),
+  );
+  if (ptConflict) {
+    const trName = userById(db, trainerId)?.fullName ?? 'HLV';
+    fail(`Huấn luyện viên ${trName} đã có lịch hẹn PT 1-kèm-1 (${fmtTime(ptConflict.startAt)}–${fmtTime(ptConflict.endAt)}) trùng khung giờ.`);
+  }
+
   const old = s.startAt;
   const oldTrainer = s.trainerId;
   s.date = date;
-  s.startAt = atTime(date, time);
-  s.endAt = new Date(new Date(s.startAt).getTime() + c.durationMin * 60000).toISOString();
-  s.room = room;
+  s.startAt = newStart;
+  s.endAt = newEnd;
+  s.room = cleanRoom;
   s.trainerId = trainerId;
-  const msg = `Lớp ${c.name} đổi từ ${fmtDateTime(old)} sang ${fmtDateTime(s.startAt)} (${room}).`;
+  const msg = `Lớp ${c.name} đổi từ ${fmtDateTime(old)} sang ${fmtDateTime(s.startAt)} (${cleanRoom}).`;
   db.classBookings
     .filter((b) => b.sessionId === s.id && ['booked', 'waitlist'].includes(b.status))
     .forEach((b) => notify(db, b.memberId, 'Buổi học được đổi lịch', msg, 'warning', '/member/bookings'));
   notify(db, trainerId, 'Buổi dạy được đổi lịch', msg, 'warning', '/trainer/classes');
   if (oldTrainer !== trainerId) notify(db, oldTrainer, 'Buổi dạy được chuyển cho HLV khác', `Buổi ${c.name} ${fmtDateTime(old)} đã được chuyển sang HLV khác.`, 'info');
+  return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1466,6 +1605,7 @@ export function runScheduler(db: DB) {
   const now = Date.now();
   const today = todayStr();
   const cfg = db.settings;
+  normalizeSessions(db);
   ensureSessions(db);
 
   for (const s of db.sessions) {

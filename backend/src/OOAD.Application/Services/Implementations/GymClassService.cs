@@ -530,16 +530,90 @@ public class GymClassService : IGymClassService
         if (targetTrainer.User?.Status == UserStatus.Locked)
             throw new ValidationException("Huấn luyện viên được chọn hiện đang bị khóa tài khoản.");
 
-        if (await _classSessionRepository.HasRoomConflictAsync(
-            session.GymClass.BranchId, targetRoom, newStartUtc, newEndUtc, session.Id, cancellationToken))
+        var sameClassSessions = await _classSessionRepository.GetSessionsWithDetailsAsync(
+            classId: session.ClassId,
+            fromUtc: newStartUtc,
+            toUtc: newEndUtc,
+            cancellationToken: cancellationToken);
+
+        var sameClassConflict = sameClassSessions.FirstOrDefault(other =>
+            other.Id != session.Id &&
+            !other.Status.Equals("CANCELLED", StringComparison.OrdinalIgnoreCase) &&
+            SchedulingHelpers.Utc(other.StartAt) < newEndUtc &&
+            newStartUtc < SchedulingHelpers.Utc(other.EndAt));
+
+        if (sameClassConflict != null)
         {
-            throw new ValidationException($"Phòng '{targetRoom}' đã có buổi học khác trong khung giờ này.");
+            throw new ValidationException($"Lớp '{session.GymClass.Name}' đã có buổi học khác trùng khung giờ này.");
         }
 
-        if (await _classSessionRepository.HasTrainerSessionConflictAsync(
-            targetTrainer.Id, newStartUtc, newEndUtc, session.Id, cancellationToken))
+        var branchSessions = await _classSessionRepository.GetSessionsWithDetailsAsync(
+            branchId: session.GymClass.BranchId,
+            fromUtc: newStartUtc,
+            toUtc: newEndUtc,
+            cancellationToken: cancellationToken);
+
+        var roomConflict = branchSessions.FirstOrDefault(other =>
+            other.Id != session.Id &&
+            !other.Status.Equals("CANCELLED", StringComparison.OrdinalIgnoreCase) &&
+            other.GymClass.Room.Trim().Equals(targetRoom, StringComparison.OrdinalIgnoreCase) &&
+            SchedulingHelpers.Utc(other.StartAt) < newEndUtc &&
+            newStartUtc < SchedulingHelpers.Utc(other.EndAt));
+
+        if (roomConflict != null)
         {
-            throw new ValidationException($"Huấn luyện viên {targetTrainer.User?.FullName} đã có lịch dạy lớp khác trùng khung giờ.");
+            var otherStartVn = SchedulingHelpers.Utc(roomConflict.StartAt).Add(SchedulingHelpers.VietnamOffset);
+            var otherEndVn = SchedulingHelpers.Utc(roomConflict.EndAt).Add(SchedulingHelpers.VietnamOffset);
+            throw new ValidationException(
+                $"Phòng '{targetRoom}' tại {session.GymClass.Branch.Name} đã có lớp '{roomConflict.GymClass.Name}' ({otherStartVn:HH:mm}–{otherEndVn:HH:mm}) trùng khung giờ.");
+        }
+
+        if (!session.GymClass.Room.Trim().Equals(targetRoom, StringComparison.OrdinalIgnoreCase))
+        {
+            var otherClassSessions = await _classSessionRepository.GetSessionsWithDetailsAsync(
+                classId: session.ClassId,
+                fromUtc: DateTime.UtcNow,
+                cancellationToken: cancellationToken);
+
+            foreach (var other in otherClassSessions)
+            {
+                if (other.Id == session.Id ||
+                    other.Status.Equals("CANCELLED", StringComparison.OrdinalIgnoreCase) ||
+                    other.Status.Equals("COMPLETED", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var otherStartUtc = SchedulingHelpers.Utc(other.StartAt);
+                var otherEndUtc = SchedulingHelpers.Utc(other.EndAt);
+                if (await _classSessionRepository.HasRoomConflictAsync(
+                    session.GymClass.BranchId, targetRoom, otherStartUtc, otherEndUtc, other.Id, cancellationToken))
+                {
+                    var otherStartVn = otherStartUtc.Add(SchedulingHelpers.VietnamOffset);
+                    throw new ValidationException(
+                        $"Không thể đổi phòng lớp sang '{targetRoom}' vì buổi học khác của lớp ({otherStartVn:HH:mm dd/MM/yyyy}) bị trùng phòng với lớp khác.");
+                }
+            }
+        }
+
+        var trainerSessions = await _classSessionRepository.GetSessionsWithDetailsAsync(
+            trainerId: targetTrainer.Id,
+            fromUtc: newStartUtc,
+            toUtc: newEndUtc,
+            cancellationToken: cancellationToken);
+
+        var trainerConflict = trainerSessions.FirstOrDefault(other =>
+            other.Id != session.Id &&
+            !other.Status.Equals("CANCELLED", StringComparison.OrdinalIgnoreCase) &&
+            SchedulingHelpers.Utc(other.StartAt) < newEndUtc &&
+            newStartUtc < SchedulingHelpers.Utc(other.EndAt));
+
+        if (trainerConflict != null)
+        {
+            var otherStartVn = SchedulingHelpers.Utc(trainerConflict.StartAt).Add(SchedulingHelpers.VietnamOffset);
+            var otherEndVn = SchedulingHelpers.Utc(trainerConflict.EndAt).Add(SchedulingHelpers.VietnamOffset);
+            throw new ValidationException(
+                $"Huấn luyện viên {targetTrainer.User?.FullName} đã có lịch dạy lớp '{trainerConflict.GymClass.Name}' tại {trainerConflict.GymClass.Branch.Name} ({otherStartVn:HH:mm}–{otherEndVn:HH:mm}) trùng khung giờ.");
         }
 
         if (await HasBookedPtConflictAsync(targetTrainer.Id, newStartUtc, newEndUtc, cancellationToken))
@@ -556,7 +630,7 @@ public class GymClassService : IGymClassService
         session.TrainerId = targetTrainer.Id;
         _classSessionRepository.Update(session);
 
-        if (!session.GymClass.Room.Equals(targetRoom, StringComparison.Ordinal))
+        if (!session.GymClass.Room.Trim().Equals(targetRoom, StringComparison.OrdinalIgnoreCase))
         {
             session.GymClass.Room = targetRoom;
             _gymClassRepository.Update(session.GymClass);
