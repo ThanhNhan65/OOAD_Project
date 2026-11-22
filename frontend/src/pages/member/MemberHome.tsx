@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
 import { CalendarDays, Dumbbell, QrCode, Flame, Timer, CreditCard, ArrowRight, Sparkles, Activity, AlertTriangle } from 'lucide-react';
@@ -7,6 +7,8 @@ import * as L from '../../store/logic';
 import { Badge, StatCard, Empty, Progress } from '../../components/ui';
 import { mStatusLabel, cbLabel, ptbLabel } from '../../components/labels';
 import { fmtDate, fmtTime, diffDays, todayStr, fmtWeekday } from '../../utils';
+import { ptApi, type ApiPtBalanceDto, type ApiPtBookingDto } from '../../api/ptApi';
+import { bodyMeasurementsApi, type ApiBodyMeasurementDto } from '../../api/bodyMeasurementsApi';
 
 export function useMemberData() {
   const { db, user } = useApp();
@@ -31,23 +33,99 @@ export function useMemberData() {
 
 export function MemberHome() {
   const { db, user } = useApp();
-  const { current, latest, balance, upcomingClass, upcomingPT } = useMemberData();
+  const { current, latest, balance: localBalance, upcomingClass, upcomingPT: localUpcomingPT } = useMemberData();
+
+  const [apiBalance, setApiBalance] = useState<ApiPtBalanceDto | null>(null);
+  const [apiPtBookings, setApiPtBookings] = useState<ApiPtBookingDto[] | null>(null);
+  const [apiMeasurements, setApiMeasurements] = useState<ApiBodyMeasurementDto[] | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    Promise.allSettled([
+      ptApi.getPtBalance(),
+      ptApi.getMyPtBookings(),
+      bodyMeasurementsApi.getMyMeasurements(),
+    ]).then(([bRes, ptRes, mRes]) => {
+      if (!mounted) return;
+      if (bRes.status === 'fulfilled') setApiBalance(bRes.value);
+      if (ptRes.status === 'fulfilled') setApiPtBookings(ptRes.value);
+      if (mRes.status === 'fulfilled') setApiMeasurements(mRes.value);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const plan = current ? L.planById(db, current.planId) : undefined;
   const st = current ? L.membershipStatus(db, current) : latest ? L.membershipStatus(db, latest) : undefined;
   const daysLeft = current ? diffDays(todayStr(), current.endDate) : 0;
   const total = current ? diffDays(current.startDate, current.endDate) : 1;
-  const metrics = db.bodyMetrics.filter((m) => m.memberId === user!.id).sort((a, b) => a.date.localeCompare(b.date));
-  const monthCheckins = db.checkins.filter((c) => c.memberId === user!.id && c.result === 'success' && new Date(c.checkInAt).getTime() > Date.now() - 30 * 86400000);
-  const minutes = monthCheckins.reduce((s, c) => s + (c.checkOutAt ? (new Date(c.checkOutAt).getTime() - new Date(c.checkInAt).getTime()) / 60000 : 0), 0);
-  const attended = db.classBookings.filter((b) => b.memberId === user!.id && b.status === 'attended').length + db.ptBookings.filter((b) => b.memberId === user!.id && b.status === 'completed').length;
+
+  // Use API metrics or local
+  const metrics = useMemo(() => {
+    if (apiMeasurements && apiMeasurements.length > 0) {
+      return apiMeasurements.map((m) => ({
+        date: m.measuredAt.slice(0, 10),
+        weight: Number(m.weight),
+      }));
+    }
+    return db.bodyMetrics
+      .filter((m) => m.memberId === user!.id)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((m) => ({ date: m.date, weight: m.weight }));
+  }, [apiMeasurements, db.bodyMetrics, user]);
+
+  const monthCheckins = db.checkins.filter(
+    (c) => c.memberId === user!.id && c.result === 'success' && new Date(c.checkInAt).getTime() > Date.now() - 30 * 86400000,
+  );
+  const minutes = monthCheckins.reduce(
+    (s, c) => s + (c.checkOutAt ? (new Date(c.checkOutAt).getTime() - new Date(c.checkInAt).getTime()) / 60000 : 0),
+    0,
+  );
+  const attended =
+    db.classBookings.filter((b) => b.memberId === user!.id && b.status === 'attended').length +
+    db.ptBookings.filter((b) => b.memberId === user!.id && b.status === 'completed').length;
+
+  const now = Date.now();
+  const upcomingPtEvents = useMemo(() => {
+    if (apiPtBookings && apiPtBookings.length > 0) {
+      return apiPtBookings
+        .filter((b) => ['PENDING', 'CONFIRMED'].includes(b.status) && new Date(b.startAt).getTime() > now)
+        .map((b) => ({
+          at: b.startAt,
+          title: `PT 1-kèm-1 · ${b.trainerName}`,
+          sub: b.branchName,
+          badge: ptbLabel[b.status.toLowerCase() as keyof typeof ptbLabel] || ['Đã đặt', 'blue'],
+          color: '#00d1b2',
+        }));
+    }
+    return localUpcomingPT.map((b) => ({
+      at: b.startAt,
+      title: `PT 1-kèm-1 · ${L.userById(db, b.trainerId)?.fullName}`,
+      sub: L.branchById(db, b.branchId)?.name ?? '',
+      badge: ptbLabel[b.status],
+      color: '#00d1b2',
+    }));
+  }, [apiPtBookings, localUpcomingPT, now, db]);
 
   const events = [
     ...upcomingClass.map(({ b, s }) => {
       const c = L.classById(db, s.classId)!;
-      return { at: s.startAt, title: c.name, sub: `${s.room} · ${L.branchById(db, c.branchId)?.name}`, badge: cbLabel[b.status], color: c.color };
+      return {
+        at: s.startAt,
+        title: c.name,
+        sub: `${s.room} · ${L.branchById(db, c.branchId)?.name}`,
+        badge: cbLabel[b.status],
+        color: c.color,
+      };
     }),
-    ...upcomingPT.map((b) => ({ at: b.startAt, title: `PT 1-kèm-1 · ${L.userById(db, b.trainerId)?.fullName}`, sub: L.branchById(db, b.branchId)?.name ?? '', badge: ptbLabel[b.status], color: '#00d1b2' })),
+    ...upcomingPtEvents,
   ].sort((a, b) => a.at.localeCompare(b.at));
+
+  // Balance values
+  const totalBalance = apiBalance ? apiBalance.total : localBalance.total;
+  const freeBalance = apiBalance ? apiBalance.freeSessions : localBalance.free;
+  const pkgBalance = apiBalance ? apiBalance.packageSessions : localBalance.pkg;
 
   return (
     <>
@@ -68,6 +146,7 @@ export function MemberHome() {
           </div>
           <div className="row wrap">
             <Link to="/member/card" className="btn"><QrCode size={17} /> Thẻ check-in</Link>
+            <Link to="/member/pt" className="btn"><Dumbbell size={17} /> Đặt lịch PT</Link>
             <Link to="/member/classes" className="btn primary"><CalendarDays size={17} /> Đặt lớp ngay</Link>
           </div>
         </div>
@@ -88,7 +167,13 @@ export function MemberHome() {
       </div>
 
       <div className="grid g4 mb16">
-        <StatCard icon={<Dumbbell size={22} />} label="Buổi PT còn lại" value={balance.total} color="#00d1b2" sub={`${balance.free} tặng kèm · ${balance.pkg} gói PT`} />
+        <StatCard
+          icon={<Dumbbell size={22} />}
+          label="Buổi PT còn lại"
+          value={totalBalance}
+          color="#00d1b2"
+          sub={`${freeBalance} tặng kèm · ${pkgBalance} gói PT`}
+        />
         <StatCard icon={<Flame size={22} />} label="Lượt đến phòng (30 ngày)" value={monthCheckins.length} color="#ff5c8a" />
         <StatCard icon={<Timer size={22} />} label="Giờ tập (30 ngày)" value={`${Math.round(minutes / 60)}h`} color="#ffb020" />
         <StatCard icon={<Activity size={22} />} label="Buổi đã tham gia" value={attended} color="#7c5cff" />
@@ -120,7 +205,7 @@ export function MemberHome() {
         </div>
         <div className="card">
           <div className="card-head">
-            <h2><Activity size={18} /> Cân nặng</h2>
+            <h2><Activity size={18} /> Cân nặng & Tiến độ</h2>
             <Link to="/member/progress" className="btn ghost sm">Chi tiết <ArrowRight size={14} /></Link>
           </div>
           {metrics.length < 2 ? <Empty text="Cập nhật chỉ số cơ thể để xem biểu đồ tiến độ" /> : (
@@ -153,3 +238,5 @@ export function MemberHome() {
     </>
   );
 }
+
+export default MemberHome;

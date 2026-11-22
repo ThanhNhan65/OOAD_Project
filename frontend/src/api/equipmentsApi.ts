@@ -12,9 +12,20 @@ export const equipmentsApi = {
     method: 'PATCH',
     body: JSON.stringify({ status }),
   }),
-  getReports: (equipmentId?: string) => request<EquipmentReport[]>(`/equipments/reports${equipmentId ? `?equipmentId=${equipmentId}` : ''}`),
+  getReports: (equipmentId?: string, branchId?: string) => {
+    const params = new URLSearchParams();
+    if (equipmentId) params.set('equipmentId', equipmentId);
+    if (branchId) params.set('branchId', branchId);
+    const qs = params.toString();
+    return request<EquipmentReport[]>(`/equipments/reports${qs ? `?${qs}` : ''}`);
+  },
   createReport: (data: Partial<EquipmentReport>) => request<EquipmentReport>('/equipments/reports', {
     method: 'POST',
     body: JSON.stringify(data),
+  }),
+  // Thêm mới hàm này ở đây
+  updateReportStatus: (id: string, status: string, note: string) => request<EquipmentReport>(`/equipments/reports/${id}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status, note }),
   }),
 };

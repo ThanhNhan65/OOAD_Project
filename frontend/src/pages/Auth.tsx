@@ -44,7 +44,7 @@ function Hero() {
 const DEMO = [
   ['hoivien@ooad.vn', 'm1'],
   ['pt@ooad.vn', 'tr1'],
-  ['letan@ooad.vn', 'rc1'],
+  ['letan@ooad.vn', 'rc1'], 
   ['admin@ooad.vn', 'admin'],
 ];
 

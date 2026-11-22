@@ -1,8 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 import {
   Save, Plus, Scale, Ruler, Percent, Dumbbell, Activity, Receipt, Wrench, QrCode, MapPin, Clock, Trash2,
-  Sparkles, Utensils, Apple, Eye, Copy, Check, History,
+  Sparkles, Utensils, Apple, Eye, Copy, Check, History, RefreshCw,
 } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
 import * as L from '../../store/logic';
@@ -10,7 +10,10 @@ import { Avatar, Badge, Empty, Modal, PageHead, StatCard, Tabs } from '../../com
 import { methodLabel, reportLabel, eqLabel } from '../../components/labels';
 import { MemberCardWidget } from '../../components/member-card';
 import { fmtDate, fmtDateTime, fmtMoney, todayStr, calcBMI, bmiLabel, uid as genId, fmtTime } from '../../utils';
-import type { User, BodyMetric } from '../../types';
+import { bodyMeasurementsApi, type ApiBodyMeasurementDto, type ApiNutritionPlanDto } from '../../api/bodyMeasurementsApi';
+import { equipmentsApi } from '../../api/equipmentsApi';
+import { request } from '../../api/apiClient';
+import type { User, BodyMetric, Equipment, EquipmentReport } from '../../types';
 
 /* ================= Hồ sơ ================= */
 export function MemberProfile() {
@@ -82,19 +85,54 @@ interface ChartClickState {
 
 /* ================= Tiến độ & AI Dinh Dưỡng ================= */
 export function MemberProgress() {
-  const { db, user, act } = useApp();
+  const { db, user, act, toast } = useApp();
   const [activeTab, setActiveTab] = useState<'progress' | 'nutrition'>('progress');
   const [openAddModal, setOpenAddModal] = useState(false);
   const [inspectedMetric, setInspectedMetric] = useState<BodyMetric | null>(null);
   const [selectedMilestoneId, setSelectedMilestoneId] = useState<string | null>(null);
   const [metricKey, setMetricKey] = useState<MetricKey>('weight');
   const [compareKey, setCompareKey] = useState<MetricKey | 'none'>('muscleMass');
+  const [apiMeasurements, setApiMeasurements] = useState<ApiBodyMeasurementDto[] | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const list = useMemo(() => {
+  const fetchMeasurements = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await bodyMeasurementsApi.getMyMeasurements();
+      setApiMeasurements(data);
+    } catch {
+      // offline fallback
+      setApiMeasurements(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchMeasurements();
+  }, [fetchMeasurements]);
+
+  const list: BodyMetric[] = useMemo(() => {
+    if (apiMeasurements && apiMeasurements.length > 0) {
+      return apiMeasurements.map((m) => ({
+        id: m.id,
+        memberId: m.memberId,
+        date: m.measuredAt.slice(0, 10),
+        weight: Number(m.weight),
+        height: Number(m.height || 175),
+        bmi: Number(m.bmi || 24),
+        bodyFat: m.bodyFat ? Number(m.bodyFat) : undefined,
+        muscleMass: m.muscleMass ? Number(m.muscleMass) : undefined,
+        waist: m.waist ? Number(m.waist) : undefined,
+        chest: m.chest ? Number(m.chest) : undefined,
+        hips: m.hips ? Number(m.hips) : undefined,
+        note: m.note,
+      })).sort((a, b) => a.date.localeCompare(b.date));
+    }
     return db.bodyMetrics
       .filter((m) => m.memberId === user!.id)
       .sort((a, b) => a.date.localeCompare(b.date));
-  }, [db.bodyMetrics, user]);
+  }, [apiMeasurements, db.bodyMetrics, user]);
 
   const first = list[0];
   const last = list.at(-1);
@@ -662,6 +700,7 @@ export function MemberProgress() {
           lastChest={last?.chest}
           lastWaist={last?.waist}
           lastHips={last?.hips}
+          onSaved={fetchMeasurements}
           onClose={() => setOpenAddModal(false)}
         />
       )}
@@ -917,6 +956,7 @@ function MetricModal({
   lastChest,
   lastWaist,
   lastHips,
+  onSaved,
   onClose,
 }: {
   lastHeight?: number;
@@ -926,9 +966,10 @@ function MetricModal({
   lastChest?: number;
   lastWaist?: number;
   lastHips?: number;
+  onSaved?: () => void;
   onClose: () => void;
 }) {
-  const { user, act } = useApp();
+  const { user, act, toast } = useApp();
   const [f, setF] = useState({
     date: todayStr(),
     weight: String(lastWeight ?? ''),
@@ -943,13 +984,14 @@ function MetricModal({
 
   const bmi = calcBMI(+f.weight, +f.height);
 
-  const save = () => {
-    const r = act((d) => {
-      if (!+f.weight || !+f.height) throw new Error('Vui lòng nhập cân nặng và chiều cao hợp lệ');
-      d.bodyMetrics.push({
-        id: genId('bm'),
-        memberId: user!.id,
-        date: f.date,
+  const save = async () => {
+    if (!+f.weight || !+f.height) {
+      toast('Vui lòng nhập cân nặng và chiều cao hợp lệ', 'error');
+      return;
+    }
+
+    try {
+      await bodyMeasurementsApi.createMeasurement({
         weight: +f.weight,
         height: +f.height,
         bmi,
@@ -959,10 +1001,34 @@ function MetricModal({
         waist: f.waist ? +f.waist : undefined,
         hips: f.hips ? +f.hips : undefined,
         note: f.note,
+        measuredAt: f.date ? `${f.date}T00:00:00Z` : undefined,
       });
-      return true;
-    }, 'Đã lưu mốc đo chỉ số cơ thể');
-    if (r) onClose();
+      toast('Đã lưu mốc đo chỉ số cơ thể thành công', 'success');
+      onSaved?.();
+      onClose();
+    } catch {
+      const r = act((d) => {
+        d.bodyMetrics.push({
+          id: genId('bm'),
+          memberId: user!.id,
+          date: f.date,
+          weight: +f.weight,
+          height: +f.height,
+          bmi,
+          bodyFat: f.bodyFat ? +f.bodyFat : undefined,
+          muscleMass: f.muscleMass ? +f.muscleMass : undefined,
+          chest: f.chest ? +f.chest : undefined,
+          waist: f.waist ? +f.waist : undefined,
+          hips: f.hips ? +f.hips : undefined,
+          note: f.note,
+        });
+        return true;
+      }, 'Đã lưu mốc đo chỉ số cơ thể');
+      if (r) {
+        onSaved?.();
+        onClose();
+      }
+    }
   };
 
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
@@ -1554,47 +1620,181 @@ export function MemberPayments() {
 
 /* ================= Báo thiết bị hỏng ================= */
 export function MemberEquipment() {
-  const { db, user, act } = useApp();
+  const { db, user } = useApp();
   const [tab, setTab] = useState<'mine' | 'new'>('mine');
-  const [branch, setBranch] = useState(db.branches[0].id);
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
+  const [equipments, setEquipments] = useState<Equipment[]>([]);
+  const [reports, setReports] = useState<EquipmentReport[]>([]);
+  const [branch, setBranch] = useState('');
   const [eq, setEq] = useState('');
   const [desc, setDesc] = useState('');
-  const mine = db.equipmentReports.filter((r) => r.reporterId === user!.id);
-  const eqs = db.equipment.filter((e) => e.branchId === branch && e.status !== 'retired');
-  const submit = () => {
-    const r = act((d) => { if (!eq) throw new Error('Chọn thiết bị'); if (!desc.trim()) throw new Error('Mô tả sự cố'); L.reportEquipment(d, user!.id, eq, desc.trim()); return true; }, 'Đã gửi phản ánh, cảm ơn bạn!');
-    if (r) { setDesc(''); setEq(''); setTab('mine'); }
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState('');
+  const [msg, setMsg] = useState('');
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setErr('');
+    try {
+      const [brList, eqList, repList] = await Promise.all([
+        request<{ id: string; name: string }[]>('/branches').catch(() => db.branches),
+        equipmentsApi.getAll(),
+        equipmentsApi.getReports(),
+      ]);
+      setBranches(brList);
+      setEquipments(eqList);
+      setReports(repList);
+      setBranch((prev) => prev || brList[0]?.id || '');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Không thể tải dữ liệu thiết bị');
+    } finally {
+      setLoading(false);
+    }
+  }, [db.branches]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const mine = useMemo(
+    () => reports.filter((r) => !r.reporterId || r.reporterId === user?.id),
+    [reports, user?.id]
+  );
+
+  const eqs = useMemo(
+    () => equipments.filter((e) => (!branch || e.branchId === branch) && e.status !== 'retired'),
+    [equipments, branch]
+  );
+
+  const getEqText = (status: string) =>
+    (eqLabel as Record<string, [string, string]>)[status]?.[0] ?? status;
+
+  const getReportInfo = (status: string): [string, 'green' | 'amber' | 'red' | 'blue' | 'purple' | 'slate'] =>
+    ((reportLabel as Record<string, [string, 'green' | 'amber' | 'red' | 'blue' | 'purple' | 'slate']>)[status] ?? [status, 'slate']);
+
+  const branchName = (id?: string) =>
+    branches.find((b) => b.id === id)?.name ?? L.branchById(db, id ?? '')?.name ?? '';
+
+  const submit = async () => {
+    setErr('');
+    setMsg('');
+    if (!eq) return setErr('Vui lòng chọn thiết bị');
+    if (!desc.trim()) return setErr('Vui lòng mô tả sự cố');
+
+    setSubmitting(true);
+    try {
+      await equipmentsApi.createReport({
+        equipmentId: eq,
+        description: desc.trim(),
+      });
+      setDesc('');
+      setEq('');
+      setMsg('Đã gửi phản ánh thành công, cảm ơn bạn!');
+      setTab('mine');
+      await loadData();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Gửi phản ánh thất bại');
+    } finally {
+      setSubmitting(false);
+    }
   };
+
   return (
     <>
       <PageHead title="Phản ánh thiết bị" desc="Phát hiện thiết bị hỏng hoặc sự cố? Hãy báo cho chúng tôi." />
-      <Tabs value={tab} onChange={setTab} tabs={[{ id: 'mine', label: 'Phản ánh của tôi', count: mine.filter((r) => r.status !== 'resolved').length }, { id: 'new', label: <><Wrench size={15} /> Gửi phản ánh mới</> }]} />
-      {tab === 'new' ? (
+
+      {err && <div className="card mb12" style={{ borderColor: 'var(--red)', color: 'var(--red)', padding: 12 }}>{err}</div>}
+      {msg && <div className="card mb12" style={{ borderColor: 'var(--green)', color: 'var(--green)', padding: 12 }}>{msg}</div>}
+
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'mine', label: 'Phản ánh của tôi', count: mine.filter((r) => r.status !== 'resolved').length },
+          { id: 'new', label: <><Wrench size={15} /> Gửi phản ánh mới</> },
+        ]}
+      />
+
+      {loading ? (
+        <div className="card" style={{ padding: 24 }}>Đang tải dữ liệu thiết bị...</div>
+      ) : tab === 'new' ? (
         <div className="card" style={{ maxWidth: 720 }}>
           <div className="form-grid">
-            <div className="field"><label>Chi nhánh</label><select className="input" value={branch} onChange={(e) => { setBranch(e.target.value); setEq(''); }}>{db.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
-            <div className="field"><label>Thiết bị</label><select className="input" value={eq} onChange={(e) => setEq(e.target.value)} id="eq-select"><option value="">— Chọn thiết bị —</option>{eqs.map((e) => <option key={e.id} value={e.id}>{e.code} · {e.name} ({eqLabel[e.status][0]})</option>)}</select></div>
-            <div className="field full"><label>Mô tả sự cố</label><textarea className="input" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="VD: Băng chạy bị trượt, phát tiếng kêu..." id="eq-desc" /></div>
+            <div className="field">
+              <label>Chi nhánh</label>
+              <select className="input" value={branch} onChange={(e) => { setBranch(e.target.value); setEq(''); }}>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Thiết bị</label>
+              <select className="input" value={eq} onChange={(e) => setEq(e.target.value)} id="eq-select">
+                <option value="">— Chọn thiết bị —</option>
+                {eqs.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.code ? `${e.code} · ` : ''}{e.name} ({getEqText(e.status)})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field full">
+              <label>Mô tả sự cố</label>
+              <textarea
+                className="input"
+                value={desc}
+                onChange={(e) => setDesc(e.target.value)}
+                placeholder="VD: Băng chạy bị trượt, phát tiếng kêu..."
+                id="eq-desc"
+              />
+            </div>
           </div>
-          <div className="row mt16" style={{ justifyContent: 'flex-end' }}><button className="btn primary" onClick={submit} id="eq-submit">Gửi phản ánh</button></div>
+          <div className="row mt16" style={{ justifyContent: 'flex-end' }}>
+            <button className="btn primary" onClick={submit} disabled={submitting} id="eq-submit">
+              {submitting ? 'Đang gửi...' : 'Gửi phản ánh'}
+            </button>
+          </div>
         </div>
-      ) : mine.length === 0 ? <div className="card"><Empty text="Bạn chưa gửi phản ánh nào" /></div> : (
+      ) : mine.length === 0 ? (
+        <div className="card"><Empty text="Bạn chưa gửi phản ánh nào" /></div>
+      ) : (
         <div className="grid g2">
           {mine.map((r) => {
-            const e = db.equipment.find((x) => x.id === r.equipmentId);
+            const e = equipments.find((x) => x.id === r.equipmentId);
+            const [badgeText, badgeColor] = getReportInfo(r.status);
             return (
               <div className="card" key={r.id}>
-                <div className="row between"><div><b>{e?.name}</b><div className="small dim">{e?.code} · {L.branchById(db, r.branchId)?.name}</div></div><Badge color={reportLabel[r.status][1]}>{reportLabel[r.status][0]}</Badge></div>
-                <p className="muted mt8">{r.description}</p>
-                <div className="divider" />
-                <div className="col" style={{ gap: 8 }}>
-                  {r.updates.map((u, i) => (
-                    <div key={i} className="row small" style={{ alignItems: 'flex-start' }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 4, marginTop: 6, background: 'var(--primary-2)', flexShrink: 0 }} />
-                      <div><b>{reportLabel[u.status][0]}</b> · <span className="dim">{fmtDateTime(u.at)} · {L.userById(db, u.by)?.fullName}</span><div className="muted">{u.note}</div></div>
+                <div className="row between">
+                  <div>
+                    <b>{e?.name ?? 'Thiết bị'}</b>
+                    <div className="small dim">
+                      {e?.code ? `${e.code} · ` : ''}{branchName(r.branchId ?? e?.branchId)}
                     </div>
-                  ))}
+                  </div>
+                  <Badge color={badgeColor}>{badgeText}</Badge>
                 </div>
+                <p className="muted mt8">{r.description}</p>
+                {r.updates && r.updates.length > 0 && (
+                  <>
+                    <div className="divider" />
+                    <div className="col" style={{ gap: 8 }}>
+                      {r.updates.map((u, i) => {
+                        const [uText] = getReportInfo(u.status);
+                        return (
+                          <div key={i} className="row small" style={{ alignItems: 'flex-start' }}>
+                            <span style={{ width: 8, height: 8, borderRadius: 4, marginTop: 6, background: 'var(--primary-2)', flexShrink: 0 }} />
+                            <div>
+                              <b>{uText}</b> · <span className="dim">{fmtDateTime(u.at)} {u.by ? `· ${L.userById(db, u.by)?.fullName ?? u.by}` : ''}</span>
+                              <div className="muted">{u.note}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
             );
           })}
@@ -1603,3 +1803,4 @@ export function MemberEquipment() {
     </>
   );
 }
+

@@ -392,6 +392,9 @@ public class AppDbContextInitialiser
 
         // 5. Seed bổ sung (Idempotent) cho phân hệ Lớp học nhóm & Waitlist
         await SeedGroupClassesAndWaitlistDemoAsync();
+
+        // 6. Seed bổ sung (Idempotent) cho phân hệ PT 1-kèm-1, Tiến độ InBody & Đánh giá
+        await SeedPtAndProgressDemoAsync();
     }
 
     private async Task SeedGroupClassesAndWaitlistDemoAsync()
@@ -654,6 +657,267 @@ public class AppDbContextInitialiser
 
             await _context.SaveChangesAsync();
             _logger.LogInformation("Seed dữ liệu mẫu Lớp học nhóm & Buổi học thành công.");
+        }
+    }
+
+    private async Task SeedPtAndProgressDemoAsync()
+    {
+        var vnOffset = TimeSpan.FromHours(7);
+        var nowUtc = DateTime.UtcNow;
+        var todayVn = nowUtc.Add(vnOffset).Date;
+
+        var trainer = await _context.Trainers.Include(t => t.User).Include(t => t.Branch).FirstOrDefaultAsync();
+        var member = await _context.Members.Include(m => m.User).FirstOrDefaultAsync(m => m.User.Email == "hoivien@ooad.vn");
+        if (trainer == null || member == null) return;
+
+        // 1. Đảm bảo MetricTypes đầy đủ
+        var existingTypes = await _context.MetricTypes.ToListAsync();
+        var requiredCodes = new[]
+        {
+            ("WEIGHT", "Cân nặng", "kg"),
+            ("HEIGHT", "Chiều cao", "cm"),
+            ("BMI", "Chỉ số BMI", "kg/m2"),
+            ("BODY_FAT", "Tỷ lệ mỡ cơ thể", "%"),
+            ("MUSCLE_MASS", "Khối lượng cơ", "kg"),
+            ("WAIST", "Vòng eo", "cm"),
+            ("CHEST", "Vòng ngực", "cm"),
+            ("HIPS", "Vòng mông", "cm")
+        };
+
+        foreach (var (code, name, unit) in requiredCodes)
+        {
+            if (!existingTypes.Any(t => t.Code == code))
+            {
+                var mt = new MetricType { Code = code, Name = name, Unit = unit, IsActive = true };
+                await _context.MetricTypes.AddAsync(mt);
+                existingTypes.Add(mt);
+            }
+        }
+        await _context.SaveChangesAsync();
+
+        // 2. Mở sẵn các khung giờ rảnh (Availability Slots) cho HLV trong 7 ngày tới
+        if (!await _context.TrainerAvailabilities.AnyAsync(a => a.TrainerId == trainer.Id && a.StartAt >= nowUtc))
+        {
+            var slots = new List<TrainerAvailability>();
+            var times = new[]
+            {
+                (new TimeSpan(8, 30, 0), new TimeSpan(9, 30, 0)),
+                (new TimeSpan(10, 0, 0), new TimeSpan(11, 0, 0)),
+                (new TimeSpan(14, 0, 0), new TimeSpan(15, 0, 0)),
+                (new TimeSpan(15, 30, 0), new TimeSpan(16, 30, 0)),
+                (new TimeSpan(19, 0, 0), new TimeSpan(20, 0, 0))
+            };
+
+            for (int offset = 0; offset <= 7; offset++)
+            {
+                var dVn = todayVn.AddDays(offset);
+                foreach (var (start, end) in times)
+                {
+                    var startUtc = dVn.Add(start).Subtract(vnOffset);
+                    var endUtc = dVn.Add(end).Subtract(vnOffset);
+
+                    if (startUtc <= nowUtc) continue;
+
+                    // Kiểm tra tránh trùng lịch lớp học
+                    var hasConflictClass = await _context.ClassSessions.AnyAsync(s =>
+                        s.TrainerId == trainer.Id && s.Status != "CANCELLED" && s.StartAt < endUtc && s.EndAt > startUtc);
+
+                    if (!hasConflictClass)
+                    {
+                        slots.Add(new TrainerAvailability
+                        {
+                            TrainerId = trainer.Id,
+                            StartAt = startUtc,
+                            EndAt = endUtc,
+                            IsBooked = false
+                        });
+                    }
+                }
+            }
+
+            if (slots.Count > 0)
+            {
+                await _context.TrainerAvailabilities.AddRangeAsync(slots);
+                await _context.SaveChangesAsync();
+                _logger.LogInformation($"Seed thành công {slots.Count} khung giờ rảnh cho HLV {trainer.User.FullName}.");
+            }
+        }
+
+        // 3. Seed dữ liệu PT Bookings (Past Attended + Confirmed + Pending)
+        var ms = await _context.Memberships.FirstOrDefaultAsync(m => m.MemberId == member.Id && m.Status == MembershipStatus.Active);
+        if (ms != null && !await _context.Bookings.AnyAsync(b => b.MemberId == member.Id && b.Type == BookingType.PersonalTrainer))
+        {
+            // Buổi quá khứ đã hoàn thành (Attended) kèm Đánh giá 5 sao
+            var pastAv = new TrainerAvailability
+            {
+                TrainerId = trainer.Id,
+                StartAt = nowUtc.AddDays(-2).AddHours(-4),
+                EndAt = nowUtc.AddDays(-2).AddHours(-3),
+                IsBooked = true
+            };
+            await _context.TrainerAvailabilities.AddAsync(pastAv);
+            await _context.SaveChangesAsync();
+
+            var pastBooking = new Booking
+            {
+                MemberId = member.Id,
+                MembershipId = ms.Id,
+                Type = BookingType.PersonalTrainer,
+                AvailabilityId = pastAv.Id,
+                Status = BookingStatus.Attended,
+                CreatedAt = nowUtc.AddDays(-5)
+            };
+            await _context.Bookings.AddAsync(pastBooking);
+            await _context.SaveChangesAsync();
+
+            // Đánh giá cho buổi học này
+            await _context.Reviews.AddAsync(new Review
+            {
+                MemberId = member.Id,
+                TrainerId = trainer.Id,
+                BookingId = pastBooking.Id,
+                Rating = 5,
+                Comment = "HLV hướng dẫn rất chi tiết, kỹ thuật chuẩn và tạo động lực cao! Sau buổi tập thấy cơ bắp kích hoạt rất rõ.",
+                CreatedAt = nowUtc.AddDays(-2).AddHours(-2)
+            });
+
+            // Đánh giá thứ hai từ học viên khác
+            var member2 = await _context.Members.FirstOrDefaultAsync(m => m.User.Email == "minhanh@ooad.vn");
+            if (member2 != null)
+            {
+                await _context.Reviews.AddAsync(new Review
+                {
+                    MemberId = member2.Id,
+                    TrainerId = trainer.Id,
+                    Rating = 5,
+                    Comment = "Nhiệt tình, giáo án cá nhân hóa rất phù hợp với thể trạng của mình.",
+                    CreatedAt = nowUtc.AddDays(-6)
+                });
+            }
+
+            // Buổi ngày mai đã xác nhận (Confirmed)
+            var tomorrowAv = await _context.TrainerAvailabilities
+                .FirstOrDefaultAsync(a => a.TrainerId == trainer.Id && a.StartAt > nowUtc.AddHours(12) && !a.IsBooked);
+
+            if (tomorrowAv != null)
+            {
+                tomorrowAv.IsBooked = true;
+                await _context.Bookings.AddAsync(new Booking
+                {
+                    MemberId = member.Id,
+                    MembershipId = ms.Id,
+                    Type = BookingType.PersonalTrainer,
+                    AvailabilityId = tomorrowAv.Id,
+                    Status = BookingStatus.Confirmed,
+                    CreatedAt = nowUtc.AddHours(-10)
+                });
+            }
+
+            // Buổi ngày kia đang chờ xác nhận (Pending)
+            var nextAv = await _context.TrainerAvailabilities
+                .FirstOrDefaultAsync(a => a.TrainerId == trainer.Id && a.StartAt > nowUtc.AddHours(36) && !a.IsBooked);
+
+            if (nextAv != null)
+            {
+                nextAv.IsBooked = true;
+                await _context.Bookings.AddAsync(new Booking
+                {
+                    MemberId = member.Id,
+                    MembershipId = ms.Id,
+                    Type = BookingType.PersonalTrainer,
+                    AvailabilityId = nextAv.Id,
+                    Status = BookingStatus.Pending,
+                    CreatedAt = nowUtc.AddHours(-2)
+                });
+            }
+
+            await _context.SaveChangesAsync();
+            _logger.LogInformation("Seed dữ liệu mẫu Lịch hẹn PT và Đánh giá HLV thành công.");
+        }
+
+        // 4. Seed dữ liệu Tiến độ đo chỉ số cơ thể (Body Measurements)
+        if (!await _context.BodyMeasurements.AnyAsync(m => m.MemberId == member.Id))
+        {
+            var metricWeight = existingTypes.First(t => t.Code == "WEIGHT");
+            var metricHeight = existingTypes.First(t => t.Code == "HEIGHT");
+            var metricBmi = existingTypes.First(t => t.Code == "BMI");
+            var metricFat = existingTypes.First(t => t.Code == "BODY_FAT");
+            var metricMuscle = existingTypes.First(t => t.Code == "MUSCLE_MASS");
+            var metricWaist = existingTypes.First(t => t.Code == "WAIST");
+            var metricChest = existingTypes.First(t => t.Code == "CHEST");
+            var metricHips = existingTypes.First(t => t.Code == "HIPS");
+
+            var m1 = new BodyMeasurement
+            {
+                MemberId = member.Id,
+                MeasuredAt = nowUtc.AddDays(-30),
+                IsInitial = true,
+                Note = "Mốc đo ban đầu khi đăng ký tập luyện tại phòng gym"
+            };
+            m1.Values.Add(new MeasurementValue { MetricTypeId = metricWeight.Id, Value = 78.5m });
+            m1.Values.Add(new MeasurementValue { MetricTypeId = metricHeight.Id, Value = 175m });
+            m1.Values.Add(new MeasurementValue { MetricTypeId = metricBmi.Id, Value = 25.6m });
+            m1.Values.Add(new MeasurementValue { MetricTypeId = metricFat.Id, Value = 22.5m });
+            m1.Values.Add(new MeasurementValue { MetricTypeId = metricMuscle.Id, Value = 31.8m });
+            m1.Values.Add(new MeasurementValue { MetricTypeId = metricWaist.Id, Value = 86m });
+            m1.Values.Add(new MeasurementValue { MetricTypeId = metricChest.Id, Value = 95m });
+            m1.Values.Add(new MeasurementValue { MetricTypeId = metricHips.Id, Value = 98m });
+
+            var m2 = new BodyMeasurement
+            {
+                MemberId = member.Id,
+                MeasuredAt = nowUtc.AddDays(-14),
+                IsInitial = false,
+                Note = "Kiểm tra giữa kỳ sau 2 tuần siết cơ cùng HLV Minh Khôi"
+            };
+            m2.Values.Add(new MeasurementValue { MetricTypeId = metricWeight.Id, Value = 76.6m });
+            m2.Values.Add(new MeasurementValue { MetricTypeId = metricHeight.Id, Value = 175m });
+            m2.Values.Add(new MeasurementValue { MetricTypeId = metricBmi.Id, Value = 25.0m });
+            m2.Values.Add(new MeasurementValue { MetricTypeId = metricFat.Id, Value = 21.0m });
+            m2.Values.Add(new MeasurementValue { MetricTypeId = metricMuscle.Id, Value = 32.4m });
+            m2.Values.Add(new MeasurementValue { MetricTypeId = metricWaist.Id, Value = 83.5m });
+            m2.Values.Add(new MeasurementValue { MetricTypeId = metricChest.Id, Value = 96m });
+            m2.Values.Add(new MeasurementValue { MetricTypeId = metricHips.Id, Value = 97m });
+
+            var m3 = new BodyMeasurement
+            {
+                MemberId = member.Id,
+                MeasuredAt = nowUtc.AddDays(-1),
+                IsInitial = false,
+                Note = "Mốc InBody mới nhất: giảm 3.7kg mỡ, tăng khối lượng cơ nạc"
+            };
+            m3.Values.Add(new MeasurementValue { MetricTypeId = metricWeight.Id, Value = 74.8m });
+            m3.Values.Add(new MeasurementValue { MetricTypeId = metricHeight.Id, Value = 175m });
+            m3.Values.Add(new MeasurementValue { MetricTypeId = metricBmi.Id, Value = 24.4m });
+            m3.Values.Add(new MeasurementValue { MetricTypeId = metricFat.Id, Value = 19.5m });
+            m3.Values.Add(new MeasurementValue { MetricTypeId = metricMuscle.Id, Value = 33.1m });
+            m3.Values.Add(new MeasurementValue { MetricTypeId = metricWaist.Id, Value = 81m });
+            m3.Values.Add(new MeasurementValue { MetricTypeId = metricChest.Id, Value = 97.5m });
+            m3.Values.Add(new MeasurementValue { MetricTypeId = metricHips.Id, Value = 96m });
+
+            await _context.BodyMeasurements.AddRangeAsync(m1, m2, m3);
+            await _context.SaveChangesAsync();
+            _logger.LogInformation("Seed 3 mốc đo chỉ số cơ thể InBody thành công.");
+        }
+
+        // 5. Seed Kế hoạch dinh dưỡng (Nutrition Plan)
+        if (!await _context.NutritionPlans.AnyAsync(p => p.MemberId == member.Id))
+        {
+            var plan = new NutritionPlan
+            {
+                MemberId = member.Id,
+                Goal = "Tăng Cơ Nạc & Giảm Mỡ (Lean Bulk 2200 kcal)",
+                DailyCalories = 2200,
+                ProteinG = 160,
+                CarbG = 235,
+                FatG = 60,
+                MealSuggestion = "• Bữa 1 (07:30): 60g Yến mạch + 1 muỗng Whey Protein + 1 quả chuối tiêu\n• Bữa 2 (11:30): 1.5 chén Cơm gạo lứt + 200g Ức gà áp chảo + 150g Bông cải xanh luộc\n• Bữa 3 (16:30 - Trước tập): 2 lát bánh mì đen + 1 thìa bơ đậu phộng + 1 quả táo\n• Bữa 4 (19:30 - Sau tập): 200g Khoai lang luộc + 200g Cá hồi / Thịt thăn bò + Đĩa salad dầu giấm",
+                DietaryNotes = "Uống đủ 2.5 - 3 lít nước mỗi ngày. Giữ giấc ngủ sâu từ 7 - 8 tiếng để cơ bắp phục hồi tối ưu.",
+                CreatedAt = nowUtc.AddDays(-10)
+            };
+            await _context.NutritionPlans.AddAsync(plan);
+            await _context.SaveChangesAsync();
+            _logger.LogInformation("Seed kế hoạch dinh dưỡng mẫu thành công.");
         }
     }
 }

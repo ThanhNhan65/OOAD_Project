@@ -3,17 +3,20 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using OOAD.Infrastructure.Persistence.Context;
 
 #nullable disable
 
-namespace OOAD.Infrastructure.Persistence.Migrations
+namespace OOAD.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261120073716_InitialFreshMigration")]
+    partial class InitialFreshMigration
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1298,7 +1301,7 @@ namespace OOAD.Infrastructure.Persistence.Migrations
                     b.HasOne("OOAD.Domain.Entities.Booking", "Booking")
                         .WithOne("Checkin")
                         .HasForeignKey("OOAD.Domain.Entities.Checkin", "BookingId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("OOAD.Domain.Entities.Branch", "Branch")
                         .WithMany("Checkins")
@@ -1309,7 +1312,7 @@ namespace OOAD.Infrastructure.Persistence.Migrations
                     b.HasOne("OOAD.Domain.Entities.MemberCard", "Card")
                         .WithMany("Checkins")
                         .HasForeignKey("CardId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("OOAD.Domain.Entities.Member", "Member")
                         .WithMany("Checkins")
@@ -1320,7 +1323,7 @@ namespace OOAD.Infrastructure.Persistence.Migrations
                     b.HasOne("OOAD.Domain.Entities.Staff", "Recorder")
                         .WithMany("RecordedCheckins")
                         .HasForeignKey("RecordedBy")
-                        .OnDelete(DeleteBehavior.NoAction);
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("Booking");
 

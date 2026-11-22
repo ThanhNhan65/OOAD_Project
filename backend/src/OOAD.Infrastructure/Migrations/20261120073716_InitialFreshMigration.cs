@@ -3,10 +3,10 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace OOAD.Infrastructure.Persistence.Migrations
+namespace OOAD.Infrastructure.Migrations
 {
     /// <inheritdoc />
-    public partial class InitialCreate_28Entities : Migration
+    public partial class InitialFreshMigration : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -736,7 +736,7 @@ namespace OOAD.Infrastructure.Persistence.Migrations
                         column: x => x.Booking_Id,
                         principalTable: "Bookings",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.SetNull);
+                        onDelete: ReferentialAction.Restrict);
                     table.ForeignKey(
                         name: "FK_Checkins_Branches_Branch_Id",
                         column: x => x.Branch_Id,
@@ -748,7 +748,7 @@ namespace OOAD.Infrastructure.Persistence.Migrations
                         column: x => x.Card_Id,
                         principalTable: "Member_Cards",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.SetNull);
+                        onDelete: ReferentialAction.Restrict);
                     table.ForeignKey(
                         name: "FK_Checkins_Members_Member_Id",
                         column: x => x.Member_Id,

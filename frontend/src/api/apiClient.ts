@@ -43,29 +43,35 @@ export async function request<T>(endpoint: string, options?: RequestInit): Promi
     headers,
   });
 
+  // Đọc response body dưới dạng text đúng 1 lần duy nhất để tránh lỗi stream already read
+  const responseText = await response.text();
+  let data: any = null;
+  
+  if (responseText) {
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      data = responseText;
+    }
+  }
+
   if (!response.ok) {
     let errorMessage = response.statusText;
     let errorType: string | undefined;
 
-    try {
-      const rawText = await response.text();
-      if (rawText) {
-        try {
-          const errorData = JSON.parse(rawText) as { message?: string; title?: string; type?: string };
-          errorType = errorData?.type;
-          if (errorData?.message) {
-            errorMessage = errorData.message;
-          } else if (errorData?.title) {
-            errorMessage = errorData.title;
-          } else {
-            errorMessage = rawText;
-          }
-        } catch {
-          errorMessage = rawText;
+    if (data) {
+      if (typeof data === 'object') {
+        errorType = data?.type;
+        if (data.message) {
+          errorMessage = data.message;
+        } else if (data.title) {
+          errorMessage = data.title;
+        } else {
+          errorMessage = JSON.stringify(data);
         }
+      } else if (typeof data === 'string') {
+        errorMessage = data;
       }
-    } catch {
-      /* ignore body read failure */
     }
 
     if (response.status === 401 || (response.status === 403 && errorType === 'AccountLocked')) {
@@ -75,9 +81,9 @@ export async function request<T>(endpoint: string, options?: RequestInit): Promi
     throw new Error(errorMessage || `API Error [${response.status}]`);
   }
 
-  if (response.status === 204) {
+  if (response.status === 204 || !responseText) {
     return {} as T;
   }
 
-  return response.json() as Promise<T>;
+  return data as T;
 }
