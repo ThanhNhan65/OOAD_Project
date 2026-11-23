@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { equipmentsApi } from '../../api/equipmentsApi';
 import { checkinsApi, type ApiCheckinDto, type ApiCheckinOperationResultDto, type ApiStaffDashboardDto } from '../../api/checkinsApi';
 import { membershipPlansApi, type ApiFreezeRequestDto } from '../../api/membershipPlansApi';
@@ -7,7 +7,8 @@ import { classesApi, type ApiClassSessionDto } from '../../api/classesApi';
 import { getAuthToken, isApiNetworkError, request } from '../../api/apiClient';
 import type { ApiMemberDto } from '../../api/user.service';
 import { Link } from 'react-router-dom';
-import { ScanLine, LogIn, LogOut, CheckCircle2, XCircle, Users, Snowflake, Wrench, History, Search, Keyboard, Check, X, Plus, Building2, Download, Zap, ArrowLeft, RefreshCw } from 'lucide-react';
+import { ScanLine, LogIn, LogOut, CheckCircle2, XCircle, Users, Snowflake, Wrench, History, Search, Keyboard, Check, X, Plus, Building2, Download, Zap, ArrowLeft, RefreshCw, Camera, CameraOff, ImageUp } from 'lucide-react';
+import { QrCameraScanner, scanQrFromImageFile } from '../../components/QrCameraScanner';
 import { useApp } from '../../store/AppContext';
 import * as L from '../../store/logic';
 import { Avatar, Badge, Empty, Modal, PageHead, StatCard, Tabs, ReasonModal } from '../../components/ui';
@@ -227,12 +228,31 @@ function Scanner({
   const [code, setCode] = useState('');
   const [res, setRes] = useState<Result | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [cameraErr, setCameraErr] = useState<string | null>(null);
+  const [scanMode, setScanMode] = useState<'auto' | 'in' | 'out'>('auto');
+  const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const members = db.users.filter((u) => u.role === 'member').slice(0, 10);
 
+  const resolveModeForCode = useCallback(
+    (rawCode: string): 'in' | 'out' => {
+      if (scanMode !== 'auto') return scanMode;
+      const upper = rawCode.trim().toUpperCase();
+      if (apiMode) {
+        const isOpen = !!activeCheckins?.some((a) => a.cardCode?.toUpperCase() === upper);
+        return isOpen ? 'out' : 'in';
+      }
+      const localMember = db.users.find((u) => u.cardCode?.toUpperCase() === upper);
+      return localMember && L.openCheckin(db, localMember.id) ? 'out' : 'in';
+    },
+    [scanMode, apiMode, activeCheckins, db],
+  );
+
   const run = async (mode: 'in' | 'out', c = code) => {
     const trimmed = c.trim();
-    if (!trimmed) return;
+    if (!trimmed || busy) return;
 
     if (apiMode) {
       setBusy(true);
@@ -255,6 +275,9 @@ function Scanner({
       } finally {
         setBusy(false);
         setCode('');
+        if (!cameraOn) {
+          setTimeout(() => inputRef.current?.focus(), 0);
+        }
       }
       return;
     }
@@ -271,20 +294,110 @@ function Scanner({
       }
     }
     setCode('');
+    if (!cameraOn) {
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
+  };
+
+  const handleQrDecoded = (decodedText: string) => {
+    const trimmed = decodedText.trim();
+    if (!trimmed) return;
+    setCameraErr(null);
+    void run(resolveModeForCode(trimmed), trimmed);
+  };
+
+  const handleUploadQrFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const decoded = await scanQrFromImageFile(file);
+      const trimmed = decoded.trim();
+      if (!trimmed) throw new Error('Empty QR');
+      setCameraErr(null);
+      await run(resolveModeForCode(trimmed), trimmed);
+    } catch {
+      toast('Không tìm thấy mã QR hợp lệ trong ảnh.', 'error');
+    }
   };
 
   return (
     <div className="grid g2">
       <div>
         <div className="scanner">
+          <QrCameraScanner
+            active={cameraOn}
+            disabled={busy}
+            onDecoded={handleQrDecoded}
+            onError={(m) => {
+              setCameraErr(m);
+              toast(m, 'error');
+            }}
+            onActiveChange={setCameraOn}
+          />
           {[[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, y], i) => (
-            <span key={i} className="corner" style={{ [x ? 'right' : 'left']: 24, [y ? 'bottom' : 'top']: 24, borderRight: x ? undefined : 'none', borderLeft: x ? 'none' : undefined, borderBottom: y ? undefined : 'none', borderTop: y ? 'none' : undefined, borderRadius: 6 } as React.CSSProperties} />
+            <span key={i} className="corner" style={{ [x ? 'right' : 'left']: 24, [y ? 'bottom' : 'top']: 24, borderRight: x ? undefined : 'none', borderLeft: x ? 'none' : undefined, borderBottom: y ? undefined : 'none', borderTop: y ? 'none' : undefined, borderRadius: 6, pointerEvents: 'none', zIndex: 2 } as React.CSSProperties} />
           ))}
           <div className="line" />
-          <div style={{ textAlign: 'center' }}><ScanLine size={46} color="#00d1b2" /><div className="muted mt8">Đưa thẻ / mã QR vào vùng quét</div></div>
+          {!cameraOn && (
+            <div style={{ textAlign: 'center', zIndex: 2 }}>
+              <ScanLine size={46} color="#00d1b2" />
+              <div className="muted mt8">Đưa thẻ / mã QR vào vùng quét</div>
+            </div>
+          )}
         </div>
+        <div className="row wrap mt12" style={{ gap: 8, alignItems: 'center' }}>
+          <button
+            type="button"
+            id="toggle-qr-camera"
+            className={`btn sm ${cameraOn ? 'danger' : 'primary'}`}
+            onClick={() => {
+              setCameraErr(null);
+              setCameraOn((prev) => !prev);
+            }}
+          >
+            {cameraOn ? <><CameraOff size={15} /> Tắt Camera</> : <><Camera size={15} /> Bật Camera QR</>}
+          </button>
+          <button
+            type="button"
+            id="upload-qr-image"
+            className="btn sm"
+            disabled={busy}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <ImageUp size={15} /> Quét từ ảnh QR
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={handleUploadQrFile}
+          />
+          <div className="chips" style={{ marginLeft: 'auto' }}>
+            {[
+              { id: 'auto' as const, label: 'Tự động' },
+              { id: 'in' as const, label: 'Vào' },
+              { id: 'out' as const, label: 'Ra' },
+            ].map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className={`chip ${scanMode === m.id ? 'on' : ''}`}
+                onClick={() => setScanMode(m.id)}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {cameraErr && (
+          <div className="small mt8" style={{ color: '#ff4d6d' }}>
+            {cameraErr}
+          </div>
+        )}
         <div className="row mt16">
-          <input className="input grow" placeholder="Mã thẻ (VD: DF-1001)" value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && run('in')} id="scan-code" />
+          <input ref={inputRef} autoFocus className="input grow" placeholder="Mã thẻ hoặc quét USB QR (VD: DF-1001)" value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && run(resolveModeForCode(code))} id="scan-code" />
           <button className="btn success" disabled={busy} onClick={() => run('in')} id="scan-in"><LogIn size={16} /> Vào</button>
           <button className="btn" disabled={busy} onClick={() => run('out')} id="scan-out"><LogOut size={16} /> Ra</button>
         </div>

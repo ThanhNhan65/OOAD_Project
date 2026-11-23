@@ -1,4 +1,4 @@
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5111/api';
+const BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '/api' : 'http://localhost:5111/api');
 export const TOKEN_KEY = 'ooad_jwt_token';
 
 export function getAuthToken(): string | null {

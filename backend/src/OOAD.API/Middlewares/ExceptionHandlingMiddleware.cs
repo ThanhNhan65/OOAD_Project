@@ -21,11 +21,16 @@ public class ExceptionHandlingMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly ILogger<ExceptionHandlingMiddleware> _logger;
+    private readonly IHostEnvironment _env;
 
-    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
+    public ExceptionHandlingMiddleware(
+        RequestDelegate next,
+        ILogger<ExceptionHandlingMiddleware> logger,
+        IHostEnvironment env)
     {
         _next = next;
         _logger = logger;
+        _env = env;
     }
 
     public async Task InvokeAsync(HttpContext context, AppDbContext dbContext)
@@ -66,11 +71,11 @@ public class ExceptionHandlingMiddleware
         catch (Exception ex)
         {
             _logger.LogError(ex, "Đã xảy ra lỗi trong hệ thống: {Message}", ex.Message);
-            await HandleExceptionAsync(context, ex);
+            await HandleExceptionAsync(context, ex, _env.IsDevelopment());
         }
     }
 
-    private static Task HandleExceptionAsync(HttpContext context, Exception exception)
+    private static Task HandleExceptionAsync(HttpContext context, Exception exception, bool isDevelopment)
     {
         context.Response.ContentType = "application/json";
 
@@ -85,6 +90,22 @@ public class ExceptionHandlingMiddleware
         };
 
         context.Response.StatusCode = statusCode;
+        if (statusCode == (int)HttpStatusCode.InternalServerError && isDevelopment)
+        {
+            var detail = exception.InnerException != null
+                ? $"{exception.Message} | Inner: {exception.InnerException.Message}"
+                : exception.Message;
+
+            return context.Response.WriteAsync(JsonSerializer.Serialize(new
+            {
+                statusCode,
+                message,
+                type,
+                detail,
+                exceptionType = exception.GetType().Name
+            }));
+        }
+
         return context.Response.WriteAsync(JsonSerializer.Serialize(new
         {
             statusCode,
