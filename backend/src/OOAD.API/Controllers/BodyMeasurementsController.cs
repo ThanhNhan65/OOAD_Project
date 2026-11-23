@@ -1,6 +1,89 @@
+using System.Security.Claims;
+using OOAD.Application.DTOs;
+using OOAD.Application.Services.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
 namespace OOAD.API.Controllers;
 
+[Route("api/body-measurements")]
 public class BodyMeasurementsController : ApiControllerBase
 {
-}
+    private readonly IBodyMeasurementService _measurementService;
 
+    public BodyMeasurementsController(IBodyMeasurementService measurementService)
+    {
+        _measurementService = measurementService;
+    }
+
+    /// <summary>
+    /// GET /api/body-measurements/me
+    /// Lấy lịch sử đo chỉ số cơ thể của hội viên đang đăng nhập.
+    /// </summary>
+    [HttpGet("me")]
+    [Authorize]
+    public async Task<ActionResult<IEnumerable<BodyMeasurementDto>>> GetMyMeasurements(CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        var list = await _measurementService.GetMemberMeasurementsAsync(userId.Value, cancellationToken);
+        return Ok(list);
+    }
+
+    /// <summary>
+    /// POST /api/body-measurements
+    /// Thêm mốc đo chỉ số cơ thể mới (Cân nặng, BMI, mỡ, cơ, các vòng đo...).
+    /// </summary>
+    [HttpPost]
+    [Authorize]
+    public async Task<ActionResult<BodyMeasurementDto>> CreateMeasurement([FromBody] CreateBodyMeasurementRequest request, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        var created = await _measurementService.CreateMeasurementAsync(userId.Value, request, cancellationToken);
+        return Ok(created);
+    }
+
+    /// <summary>
+    /// DELETE /api/body-measurements/{id}
+    /// Xóa một mốc đo chỉ số cơ thể của hội viên hiện tại.
+    /// </summary>
+    [HttpDelete("{id:guid}")]
+    [Authorize]
+    public async Task<IActionResult> DeleteMeasurement(Guid id, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        await _measurementService.DeleteMeasurementAsync(userId.Value, id, cancellationToken);
+        return NoContent();
+    }
+
+    /// <summary>
+    /// GET /api/body-measurements/metric-types
+    /// Lấy danh sách các loại chỉ số đo lường đang kích hoạt trong hệ thống.
+    /// </summary>
+    [HttpGet("metric-types")]
+    [AllowAnonymous]
+    public async Task<ActionResult<IEnumerable<MetricTypeDto>>> GetMetricTypes(CancellationToken cancellationToken)
+    {
+        var list = await _measurementService.GetMetricTypesAsync(cancellationToken);
+        return Ok(list);
+    }
+
+    private Guid? GetCurrentUserId()
+    {
+        var claim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                    ?? User.FindFirst("sub")?.Value
+                    ?? User.FindFirst("id")?.Value;
+
+        if (Guid.TryParse(claim, out var guid))
+        {
+            return guid;
+        }
+
+        return null;
+    }
+}

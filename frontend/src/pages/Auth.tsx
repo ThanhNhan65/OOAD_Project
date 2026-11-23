@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, Navigate } from 'react-router-dom';
 import { Mail, Lock, User as UserIcon, Phone, Zap, ArrowRight, ScanLine, Dumbbell, CalendarCheck, TrendingUp } from 'lucide-react';
-import { useApp } from '../store/AppContext';
-import * as L from '../store/logic';
+import { useApp, mapApiUserToAppUser } from '../store/AppContext';
 import { homeOf } from '../components/Layout';
-import { Avatar, Badge } from '../components/ui';
-import { roleLabel } from '../components/labels';
+import { Badge } from '../components/ui';
+import { authService } from '../api/auth.service';
+import { branchesApi } from '../api/branchesApi';
+import { isApiNetworkError } from '../api/apiClient';
 import hero from '../assets/gym-hero.jpg';
 
 function Hero() {
@@ -13,7 +14,7 @@ function Hero() {
     <div className="auth-hero" style={{ backgroundImage: `url(${hero})` }}>
       <div className="brand" style={{ padding: 0 }}>
         <div className="brand-logo"><Zap size={22} color="#fff" fill="#fff" /></div>
-        <div className="brand-name" style={{ fontSize: 22 }}>OOAD<span className="grad-text">Center</span></div>
+        <div className="brand-name" style={{ fontSize: 22 }}>DFGym<span className="grad-text">Center</span></div>
       </div>
       <div>
         <Badge color="pink">Chuỗi phòng gym đa chi nhánh</Badge>
@@ -37,30 +38,37 @@ function Hero() {
   );
 }
 
-const DEMO = [
-  ['hoivien@ooad.vn', 'm1'],
-  ['pt@ooad.vn', 'tr1'],
-  ['letan@ooad.vn', 'rc1'],
-  ['admin@ooad.vn', 'admin'],
-];
-
 export function Login() {
-  const { db, user, login, toast } = useApp();
+  const { user, login, toast } = useApp();
   const nav = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
   if (user) return <Navigate to={homeOf(user.role)} replace />;
-  const submit = (e?: React.FormEvent, em = email, pw = password) => {
+
+  const submit = async (e?: React.FormEvent, em = email, pw = password) => {
     e?.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
     try {
-      const u = L.login(db, em, pw);
-      login(u);
-      toast(`Xin chào, ${u.fullName}!`);
-      nav(homeOf(u.role));
+      const res = await authService.login({ email: em.trim(), password: pw });
+      const mapped = mapApiUserToAppUser(res.user);
+      login(mapped);
+      toast(`Xin chào, ${mapped.fullName}!`);
+      nav(homeOf(mapped.role));
     } catch (err) {
-      toast((err as Error).message, 'error');
+      toast(
+        isApiNetworkError(err)
+          ? 'Không thể kết nối tới máy chủ Backend API. Vui lòng khởi động API.'
+          : (err as Error).message,
+        'error',
+      );
+    } finally {
+      setSubmitting(false);
     }
   };
+
   return (
     <div className="auth-wrap">
       <Hero />
@@ -70,37 +78,22 @@ export function Login() {
           <p className="muted mt8">Chào mừng trở lại! Đăng nhập để tiếp tục hành trình tập luyện.</p>
           <form className="col mt24" style={{ gap: 14 }} onSubmit={submit}>
             <div className="field">
-              <label>Email</label>
+              <label>Email tài khoản</label>
               <div className="input-icon"><Mail size={17} /><input id="login-email" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ban@email.com" required /></div>
             </div>
             <div className="field">
               <label>Mật khẩu</label>
               <div className="input-icon"><Lock size={17} /><input id="login-password" className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••" required /></div>
             </div>
-            <button className="btn primary lg block mt8" id="login-submit">Đăng nhập <ArrowRight size={18} /></button>
+            <button className="btn primary lg block mt8" id="login-submit" disabled={submitting}>
+              {submitting ? 'Đang đăng nhập...' : <>Đăng nhập <ArrowRight size={18} /></>}
+            </button>
           </form>
           <p className="muted mt16" style={{ textAlign: 'center' }}>
-            Chưa có tài khoản? <Link to="/register" className="grad-text bold" id="go-register">Đăng ký hội viên</Link>
+            Chưa có tài khoản? <Link to="/register" className="grad-text bold" id="go-register">Đăng ký tài khoản mới</Link>
           </p>
           <div className="divider" />
-          <div className="small muted bold mb16">Tài khoản demo (mật khẩu: 123456)</div>
-          <div className="col" style={{ gap: 8 }}>
-            {DEMO.map(([em, id]) => {
-              const u = db.users.find((x) => x.id === id);
-              if (!u) return null;
-              return (
-                <button key={id} className="demo-acc" id={`demo-${u.role}`} onClick={() => submit(undefined, em, '123456')}>
-                  <Avatar user={u} size="sm" />
-                  <div className="grow">
-                    <div className="bold" style={{ fontSize: 13 }}>{u.fullName}</div>
-                    <div className="small dim">{em}</div>
-                  </div>
-                  <Badge color={roleLabel[u.role][1]}>{roleLabel[u.role][0]}</Badge>
-                </button>
-              );
-            })}
-          </div>
-          <Link to="/kiosk" className="btn block mt16" id="go-kiosk"><ScanLine size={17} /> Mở máy quét check-in (Kiosk)</Link>
+          <Link to="/kiosk" className="btn ghost block" id="go-kiosk"><ScanLine size={17} /> Mở máy quét check-in (Kiosk)</Link>
         </div>
       </div>
     </div>
@@ -108,11 +101,13 @@ export function Login() {
 }
 
 export function Register() {
-  const { db, user, act, login, toast } = useApp();
+  const { user, login, toast } = useApp();
   const nav = useNavigate();
+  const [branchOptions, setBranchOptions] = useState<{ id: string; name: string }[]>([]);
+  const [submitting, setSubmitting] = useState(false);
   const [f, setF] = useState({
     role: 'member' as 'member' | 'trainer',
-    branchId: db.branches[0]?.id || '',
+    branchId: '',
     specialty: 'Gym, HIIT, Cardio',
     experienceYears: 2,
     fullName: '',
@@ -123,29 +118,76 @@ export function Register() {
     gender: 'male' as 'male' | 'female' | 'other',
     dob: '2000-01-01',
   });
+
+  useEffect(() => {
+    branchesApi
+      .getAll()
+      .then((list) => {
+        if (list.length > 0) {
+          setBranchOptions(list.map((b) => ({ id: b.id, name: b.name })));
+          setF((prev) => ({
+            ...prev,
+            branchId: list.some((b) => b.id === prev.branchId) ? prev.branchId : list[0].id,
+          }));
+        }
+      })
+      .catch(() => {
+        toast('Không tải được danh sách chi nhánh từ máy chủ Backend API.', 'error');
+      });
+  }, [toast]);
+
   if (user) return <Navigate to={homeOf(user.role)} replace />;
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setF({ ...f, [k]: k === 'experienceYears' ? +e.target.value : e.target.value });
-  const submit = (e: React.FormEvent) => {
+
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (f.password !== f.confirm) return toast('Mật khẩu xác nhận không khớp', 'error');
     if (f.role === 'trainer' && !f.branchId) return toast('Huấn luyện viên bắt buộc phải chọn Chi nhánh!', 'error');
-    const u = act((d) => L.register(d, f), 'Đăng ký thành công!');
-    if (u) {
-      login(u);
-      nav(u.role === 'trainer' ? '/trainer/profile' : '/member/profile');
+    setSubmitting(true);
+    try {
+      const res = await authService.register({
+        email: f.email.trim(),
+        fullName: f.fullName.trim(),
+        password: f.password,
+        phone: f.phone.trim(),
+        role: f.role === 'trainer' ? 'TRAINER' : 'MEMBER',
+        branchId: f.role === 'trainer' ? f.branchId : undefined,
+        gender: f.gender,
+        dateOfBirth: f.dob,
+        specialty: f.role === 'trainer' ? f.specialty : undefined,
+        experienceYears: f.role === 'trainer' ? f.experienceYears : undefined,
+      });
+      const mapped = mapApiUserToAppUser(res.user);
+      login(mapped);
+      toast('Đăng ký thành công!');
+      nav(mapped.role === 'trainer' ? '/trainer/profile' : '/member/profile');
+    } catch (err) {
+      toast(
+        isApiNetworkError(err)
+          ? 'Không thể kết nối tới máy chủ Backend API. Vui lòng khởi động API.'
+          : (err as Error).message,
+        'error',
+      );
+    } finally {
+      setSubmitting(false);
     }
   };
+
   return (
     <div className="auth-wrap">
       <Hero />
       <div className="auth-form">
         <form className="auth-box" onSubmit={submit}>
-          <h1>Tạo tài khoản mới</h1>
-          <p className="muted mt8">Đăng ký tài khoản Hội viên hoặc Huấn luyện viên (PT).</p>
+          <h1>{f.role === 'trainer' ? 'Đăng ký Huấn luyện viên (PT)' : 'Tạo tài khoản Hội viên mới'}</h1>
+          <p className="muted mt8">
+            {f.role === 'trainer'
+              ? 'Gia nhập đội ngũ Huấn luyện viên chuyên môn cao tại chuỗi phòng gym DFGymCenter.'
+              : 'Đăng ký tài khoản để bắt đầu trải nghiệm tập luyện và các tiện ích tại phòng gym.'}
+          </p>
           <div className="form-grid mt24">
             <div className="field full">
-              <label>Vai trò đăng ký</label>
+              <label>Loại tài khoản đăng ký</label>
               <div className="chips">
                 <button
                   type="button"
@@ -158,7 +200,7 @@ export function Register() {
                 <button
                   type="button"
                   className={`chip ${f.role === 'trainer' ? 'on' : ''}`}
-                  onClick={() => setF({ ...f, role: 'trainer', branchId: f.branchId || db.branches[0]?.id || '' })}
+                  onClick={() => setF({ ...f, role: 'trainer', branchId: f.branchId || branchOptions[0]?.id || '' })}
                   id="reg-role-trainer"
                 >
                   Huấn luyện viên (TRAINER)
@@ -168,16 +210,16 @@ export function Register() {
             {f.role === 'trainer' && (
               <>
                 <div className="field full">
-                  <label>Chi nhánh làm việc (Bắt buộc) *</label>
+                  <label>Chi nhánh làm việc chính (Bắt buộc) *</label>
                   <select className="input" value={f.branchId} onChange={set('branchId')} required id="reg-branch">
-                    {db.branches.map((b) => (
+                    {branchOptions.map((b) => (
                       <option key={b.id} value={b.id}>{b.name}</option>
                     ))}
                   </select>
                 </div>
                 <div className="field">
-                  <label>Chuyên môn</label>
-                  <input className="input" value={f.specialty} onChange={set('specialty')} placeholder="Gym, Yoga, HIIT..." />
+                  <label>Chuyên môn đào tạo</label>
+                  <input className="input" value={f.specialty} onChange={set('specialty')} placeholder="Gym, Yoga, HIIT, Boxing..." />
                 </div>
                 <div className="field">
                   <label>Số năm kinh nghiệm</label>
@@ -186,14 +228,16 @@ export function Register() {
               </>
             )}
             <div className="field full"><label>Họ và tên</label><div className="input-icon"><UserIcon size={17} /><input id="reg-name" className="input" value={f.fullName} onChange={set('fullName')} required placeholder="Nguyễn Văn A" /></div></div>
-            <div className="field"><label>Email</label><div className="input-icon"><Mail size={17} /><input id="reg-email" type="email" className="input" value={f.email} onChange={set('email')} required /></div></div>
-            <div className="field"><label>Số điện thoại</label><div className="input-icon"><Phone size={17} /><input id="reg-phone" className="input" value={f.phone} onChange={set('phone')} required pattern="0[0-9]{9}" title="10 chữ số, bắt đầu bằng 0" /></div></div>
+            <div className="field"><label>Email đăng nhập</label><div className="input-icon"><Mail size={17} /><input id="reg-email" type="email" className="input" value={f.email} onChange={set('email')} required placeholder="example@email.com" /></div></div>
+            <div className="field"><label>Số điện thoại</label><div className="input-icon"><Phone size={17} /><input id="reg-phone" className="input" value={f.phone} onChange={set('phone')} required pattern="0[0-9]{9}" title="10 chữ số, bắt đầu bằng 0" placeholder="0901234567" /></div></div>
             <div className="field"><label>Giới tính</label><select className="input" value={f.gender} onChange={set('gender')}><option value="male">Nam</option><option value="female">Nữ</option><option value="other">Khác</option></select></div>
             <div className="field"><label>Ngày sinh</label><input type="date" className="input" value={f.dob} onChange={set('dob')} /></div>
-            <div className="field"><label>Mật khẩu</label><input id="reg-password" type="password" className="input" value={f.password} onChange={set('password')} required minLength={6} /></div>
-            <div className="field"><label>Xác nhận mật khẩu</label><input id="reg-confirm" type="password" className="input" value={f.confirm} onChange={set('confirm')} required /></div>
+            <div className="field"><label>Mật khẩu</label><input id="reg-password" type="password" className="input" value={f.password} onChange={set('password')} required minLength={6} placeholder="Tối thiểu 6 ký tự" /></div>
+            <div className="field"><label>Xác nhận mật khẩu</label><input id="reg-confirm" type="password" className="input" value={f.confirm} onChange={set('confirm')} required placeholder="Nhập lại mật khẩu" /></div>
           </div>
-          <button className="btn primary lg block mt24" id="reg-submit">Đăng ký <ArrowRight size={18} /></button>
+          <button className="btn primary lg block mt24" id="reg-submit" disabled={submitting}>
+            {submitting ? 'Đang đăng ký...' : <>{f.role === 'trainer' ? 'Đăng ký Huấn luyện viên' : 'Đăng ký Hội viên'} <ArrowRight size={18} /></>}
+          </button>
           <p className="muted mt16" style={{ textAlign: 'center' }}>Đã có tài khoản? <Link to="/login" className="grad-text bold">Đăng nhập</Link></p>
         </form>
       </div>

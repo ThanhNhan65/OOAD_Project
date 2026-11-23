@@ -1,41 +1,94 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Wifi, Copy, Check, CreditCard, ShieldAlert, Lock, CheckCircle2, History } from 'lucide-react';
 import { Badge } from '../ui';
-import { mStatusLabel, cardStatusMeta } from '../labels';
-import { fmtDate, fmtDateTime } from '../../utils';
+import { cardStatusMeta } from '../labels';
+import { fmtDate } from '../../utils';
 import { useApp } from '../../store/AppContext';
-import * as L from '../../store/logic';
+import { memberCardService, type MemberCardDto } from '../../api/memberCard.service';
+import { getAuthToken } from '../../api/apiClient';
 import { QRCodeDisplay } from './QRCodeDisplay';
 import { ReportLostCardButton } from './ReportLostCardButton';
 import type { CardStatus } from '../../types';
 
 export interface MemberCardWidgetProps {
   memberId?: string;
+  cardData?: MemberCardDto;
   compact?: boolean;
   showHistory?: boolean;
+  onCardChanged?: () => void | Promise<void>;
 }
+
+const mapMembershipStatusBadge = (status?: string | null): [string, string] => {
+  switch (status?.toLowerCase()) {
+    case 'active':
+      return ['Đang hiệu lực', 'green'];
+    case 'frozen':
+      return ['Đang tạm ngưng', 'purple'];
+    case 'pending':
+      return ['Chờ thanh toán', 'amber'];
+    case 'cancelled':
+      return ['Đã hủy', 'red'];
+    default:
+      return ['Hết hạn', 'gray'];
+  }
+};
 
 export function MemberCardWidget({
   memberId,
+  cardData,
   compact = false,
   showHistory = true,
+  onCardChanged,
 }: MemberCardWidgetProps) {
-  const { db, user } = useApp();
+  const { user } = useApp();
+  const [fetchedCard, setFetchedCard] = useState<MemberCardDto | null>(cardData ?? null);
+  const [loading, setLoading] = useState<boolean>(!cardData && !!getAuthToken());
   const [copied, setCopied] = useState(false);
 
-  const targetUser = memberId ? L.userById(db, memberId) : user;
-  if (!targetUser || targetUser.role !== 'member') return null;
+  const loadCard = useCallback(async () => {
+    if (cardData) {
+      setFetchedCard(cardData);
+      setLoading(false);
+      return;
+    }
+    if (!getAuthToken() || !user) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const isSelf = !memberId || memberId === user.id || memberId === user.memberId;
+      if (isSelf && user.role === 'member') {
+        const myCard = await memberCardService.getMyCard();
+        setFetchedCard(myCard);
+      } else if (memberId) {
+        const cards = await memberCardService.getMemberCards({ memberId });
+        setFetchedCard(cards[0] ?? null);
+      }
+    } catch {
+      /* keep current fetchedCard or null */
+    } finally {
+      setLoading(false);
+    }
+  }, [cardData, memberId, user]);
 
-  const cards = L.memberCardsOf(db, targetUser.id);
-  const currentCard = cards[0];
-  const cardCode = currentCard?.cardCode || targetUser.cardCode || 'DF-NONE';
-  const cardStatus: CardStatus = currentCard?.status || targetUser.cardStatus || 'ACTIVE';
-  const cardId = currentCard?.id || targetUser.id;
+  useEffect(() => {
+    loadCard();
+  }, [loadCard]);
 
-  const curMembership = L.membershipOn(db, targetUser.id);
-  const plan = curMembership ? L.planById(db, curMembership.planId) : undefined;
-  const mSt = curMembership ? L.membershipStatus(db, curMembership) : 'expired';
-  const isOwner = user?.id === targetUser.id;
+  if (loading && !fetchedCard) {
+    return <div className="card" style={{ padding: 20 }}>Đang tải thông tin thẻ hội viên...</div>;
+  }
+
+  const displayCard = cardData ?? fetchedCard;
+  if (!displayCard) return null;
+
+  const cardCode = displayCard.cardCode || 'DF-NONE';
+  const cardStatus: CardStatus = displayCard.status || 'ACTIVE';
+  const cardId = displayCard.id;
+  const isOwner = !!user && (user.id === displayCard.userId || user.memberId === displayCard.memberId);
+  const [mLabel, mColor] = mapMembershipStatusBadge(displayCard.membershipStatus);
+  const historyCards = displayCard.allCards ?? [];
 
   const copyCardCode = () => {
     navigator.clipboard.writeText(cardCode);
@@ -61,7 +114,7 @@ export function MemberCardWidget({
             <div className="row" style={{ gap: 8 }}>
               <CreditCard size={20} style={{ opacity: 0.9 }} />
               <div className="brand-name">
-                OOAD<span style={{ color: '#ff8fb0' }}>Center</span>
+                DFGym<span style={{ color: '#ff8fb0' }}>Center</span>
               </div>
             </div>
             <div className="row" style={{ gap: 10 }}>
@@ -84,7 +137,7 @@ export function MemberCardWidget({
                 Chủ thẻ hội viên
               </div>
               <div style={{ fontSize: compact ? 19 : 22, fontWeight: 800 }}>
-                {targetUser.fullName}
+                {displayCard.memberName}
               </div>
 
               <div className="row" style={{ gap: 8, marginTop: 8 }}>
@@ -124,16 +177,16 @@ export function MemberCardWidget({
               </div>
 
               <div className="row mt16 wrap" style={{ gap: 8 }}>
-                {plan ? (
-                  <Badge color="pink">{plan.name}</Badge>
+                {displayCard.currentPlanName ? (
+                  <Badge color="pink">{displayCard.currentPlanName}</Badge>
                 ) : (
                   <Badge color="gray">Chưa đăng ký gói</Badge>
                 )}
-                <Badge color={mStatusLabel[mSt][1]}>{mStatusLabel[mSt][0]}</Badge>
+                {displayCard.currentPlanName && <Badge color={mColor}>{mLabel}</Badge>}
               </div>
-              {curMembership && (
+              {displayCard.planStartDate && displayCard.planEndDate && (
                 <div className="small mt8" style={{ opacity: 0.8 }}>
-                  Hiệu lực gói: {fmtDate(curMembership.startDate)} → {fmtDate(curMembership.endDate)}
+                  Hiệu lực gói: {fmtDate(displayCard.planStartDate.slice(0, 10))} → {fmtDate(displayCard.planEndDate.slice(0, 10))}
                 </div>
               )}
             </div>
@@ -167,22 +220,26 @@ export function MemberCardWidget({
               cardId={cardId}
               cardCode={cardCode}
               status={cardStatus}
+              onReported={async () => {
+                await loadCard();
+                await onCardChanged?.();
+              }}
             />
           )}
         </div>
       </div>
 
       {/* Lịch sử các thẻ đã cấp của hội viên */}
-      {showHistory && cards.length > 1 && (
+      {showHistory && historyCards.length > 1 && (
         <div className="card" style={{ padding: '14px 16px' }}>
           <div className="row between mb12">
             <h3 style={{ fontSize: 14.5, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <History size={16} /> Lịch sử cấp / đổi thẻ hội viên ({cards.length})
+              <History size={16} /> Lịch sử cấp / đổi thẻ hội viên ({historyCards.length})
             </h3>
             <span className="small muted">Thẻ cũ tự động chuyển LOCKED / LOST khi cấp thẻ mới</span>
           </div>
           <div className="col" style={{ gap: 8 }}>
-            {cards.map((c, idx) => (
+            {historyCards.map((c, idx) => (
               <div
                 key={c.id}
                 className="row between wrap"
@@ -198,10 +255,8 @@ export function MemberCardWidget({
                     {c.cardCode}
                   </span>
                   {idx === 0 && <Badge color="purple" plain>Thẻ hiện tại</Badge>}
-                  {c.reason && <span className="small muted">· {c.reason}</span>}
                 </div>
                 <div className="row" style={{ gap: 10 }}>
-                  <span className="small dim">{fmtDateTime(c.issuedAt)}</span>
                   <Badge color={cardStatusMeta[c.status].color}>{c.status}</Badge>
                 </div>
               </div>

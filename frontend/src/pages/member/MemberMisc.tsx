@@ -1,38 +1,97 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 import {
   Save, Plus, Scale, Ruler, Percent, Dumbbell, Activity, Receipt, Wrench, QrCode, MapPin, Clock, Trash2,
-  Sparkles, Utensils, Apple, Eye, Copy, Check, History,
+  Sparkles, Eye, History,
 } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
 import * as L from '../../store/logic';
 import { Avatar, Badge, Empty, Modal, PageHead, StatCard, Tabs } from '../../components/ui';
-import { methodLabel, reportLabel, eqLabel } from '../../components/labels';
+import { formatPaymentMethod, reportLabel, eqLabel } from '../../components/labels';
 import { MemberCardWidget } from '../../components/member-card';
 import { fmtDate, fmtDateTime, fmtMoney, todayStr, calcBMI, bmiLabel, uid as genId, fmtTime } from '../../utils';
-import type { User, BodyMetric } from '../../types';
+import { bodyMeasurementsApi, type ApiBodyMeasurementDto } from '../../api/bodyMeasurementsApi';
+import { equipmentsApi } from '../../api/equipmentsApi';
+import { membershipPlansApi, type ApiMembershipDto, type ApiPaymentDto } from '../../api/membershipPlansApi';
+import { checkinsApi, type ApiCheckinDto } from '../../api/checkinsApi';
+import { userService } from '../../api/user.service';
+import { authService } from '../../api/auth.service';
+import { getAuthToken, isApiNetworkError, request } from '../../api/apiClient';
+import type { User, BodyMetric, Equipment, EquipmentReport } from '../../types';
 
 /* ================= Hồ sơ ================= */
 export function MemberProfile() {
-  const { user, act } = useApp();
+  const { user, updateCurrentUser, toast } = useApp();
   const [f, setF] = useState<User>(user!);
   const [pw, setPw] = useState({ old: '', n1: '', n2: '' });
   const set = (k: keyof User) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF({ ...f, [k]: e.target.value });
-  const save = () =>
-    act((d) => {
-      const u = d.users.find((x) => x.id === user!.id)!;
-      if (!f.fullName.trim()) throw new Error('Họ tên không được để trống');
-      Object.assign(u, { fullName: f.fullName, phone: f.phone, gender: f.gender, dob: f.dob, address: f.address });
-    }, 'Đã lưu hồ sơ');
-  const changePw = () =>
-    act((d) => {
-      const u = d.users.find((x) => x.id === user!.id)!;
-      if (u.password !== pw.old) throw new Error('Mật khẩu hiện tại không đúng');
-      if (pw.n1.length < 6) throw new Error('Mật khẩu mới tối thiểu 6 ký tự');
-      if (pw.n1 !== pw.n2) throw new Error('Xác nhận mật khẩu không khớp');
-      u.password = pw.n1;
+
+  useEffect(() => {
+    let mounted = true;
+    userService
+      .getMe()
+      .then((me) => {
+        if (!mounted) return;
+        setF((prev) => ({
+          ...prev,
+          fullName: me.fullName || prev.fullName,
+          phone: me.phone ?? prev.phone,
+          address: me.address ?? prev.address,
+          dob: me.dateOfBirth ? me.dateOfBirth.slice(0, 10) : prev.dob,
+          gender: (me.gender as User['gender']) || prev.gender,
+          cardCode: me.cardCode ?? prev.cardCode,
+        }));
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const save = async () => {
+    if (!f.fullName.trim()) {
+      toast('Họ tên không được để trống', 'error');
+      return;
+    }
+
+    try {
+      const updated = await userService.updateMe({
+        fullName: f.fullName.trim(),
+        phone: f.phone.trim(),
+        address: f.address,
+        dateOfBirth: f.dob || undefined,
+        gender: f.gender,
+      });
+      updateCurrentUser({
+        fullName: updated.fullName || f.fullName.trim(),
+        phone: updated.phone ?? f.phone.trim(),
+        address: updated.address ?? f.address,
+        dob: updated.dateOfBirth ? updated.dateOfBirth.slice(0, 10) : f.dob,
+        gender: (updated.gender as User['gender']) || f.gender,
+      });
+      toast('Đã lưu hồ sơ', 'success');
+    } catch (err) {
+      toast((err as Error).message || 'Không thể lưu hồ sơ', 'error');
+    }
+  };
+
+  const changePw = async () => {
+    if (!pw.old) return toast('Vui lòng nhập mật khẩu hiện tại', 'error');
+    if (pw.n1.length < 6) return toast('Mật khẩu mới tối thiểu 6 ký tự', 'error');
+    if (pw.n1 !== pw.n2) return toast('Xác nhận mật khẩu không khớp', 'error');
+
+    try {
+      await authService.changePassword({
+        currentPassword: pw.old,
+        newPassword: pw.n1,
+        confirmPassword: pw.n2,
+      });
       setPw({ old: '', n1: '', n2: '' });
-    }, 'Đổi mật khẩu thành công');
+      toast('Đổi mật khẩu thành công', 'success');
+    } catch (err) {
+      toast((err as Error).message || 'Không thể đổi mật khẩu', 'error');
+    }
+  };
   return (
     <>
       <PageHead title="Hồ sơ cá nhân" desc="Cập nhật thông tin liên hệ và bảo mật tài khoản." />
@@ -80,21 +139,74 @@ interface ChartClickState {
   activePayload?: Array<{ payload?: BodyMetric }>;
 }
 
-/* ================= Tiến độ & AI Dinh Dưỡng ================= */
+/* ================= Tiến độ & Chỉ số InBody ================= */
 export function MemberProgress() {
-  const { db, user, act } = useApp();
-  const [activeTab, setActiveTab] = useState<'progress' | 'nutrition'>('progress');
+  const { db, user, act, toast } = useApp();
   const [openAddModal, setOpenAddModal] = useState(false);
   const [inspectedMetric, setInspectedMetric] = useState<BodyMetric | null>(null);
   const [selectedMilestoneId, setSelectedMilestoneId] = useState<string | null>(null);
   const [metricKey, setMetricKey] = useState<MetricKey>('weight');
   const [compareKey, setCompareKey] = useState<MetricKey | 'none'>('muscleMass');
+  const [apiMeasurements, setApiMeasurements] = useState<ApiBodyMeasurementDto[] | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const list = useMemo(() => {
+  const handleDeleteMeasurement = async (id: string) => {
+    if (getAuthToken() && apiMeasurements !== null) {
+      try {
+        await bodyMeasurementsApi.deleteMeasurement(id);
+        toast('Đã xóa bản ghi mốc đo', 'success');
+        await fetchMeasurements();
+        return;
+      } catch (err) {
+        if (!isApiNetworkError(err)) {
+          toast((err as Error).message, 'error');
+          return;
+        }
+      }
+    }
+    act((d) => {
+      d.bodyMetrics = d.bodyMetrics.filter((x) => x.id !== id);
+    }, 'Đã xóa bản ghi mốc đo');
+  };
+
+  const fetchMeasurements = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await bodyMeasurementsApi.getMyMeasurements();
+      setApiMeasurements(data);
+    } catch {
+      // offline fallback
+      setApiMeasurements(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchMeasurements();
+  }, [fetchMeasurements]);
+
+  const list: BodyMetric[] = useMemo(() => {
+    if (apiMeasurements && apiMeasurements.length > 0) {
+      return apiMeasurements.map((m) => ({
+        id: m.id,
+        memberId: m.memberId,
+        date: m.measuredAt.slice(0, 10),
+        weight: Number(m.weight),
+        height: Number(m.height || 175),
+        bmi: Number(m.bmi || 24),
+        bodyFat: m.bodyFat ? Number(m.bodyFat) : undefined,
+        muscleMass: m.muscleMass ? Number(m.muscleMass) : undefined,
+        waist: m.waist ? Number(m.waist) : undefined,
+        chest: m.chest ? Number(m.chest) : undefined,
+        hips: m.hips ? Number(m.hips) : undefined,
+        note: m.note,
+      })).sort((a, b) => a.date.localeCompare(b.date));
+    }
     return db.bodyMetrics
       .filter((m) => m.memberId === user!.id)
       .sort((a, b) => a.date.localeCompare(b.date));
-  }, [db.bodyMetrics, user]);
+  }, [apiMeasurements, db.bodyMetrics, user]);
 
   const first = list[0];
   const last = list.at(-1);
@@ -120,17 +232,6 @@ export function MemberProgress() {
     hips: { label: 'Vòng mông (cm)', color: '#db2777', unit: 'cm' },
   };
 
-  const userAge = useMemo(() => {
-    if (!user?.dob) return 25;
-    const birth = new Date(user.dob);
-    const now = new Date();
-    let age = now.getFullYear() - birth.getFullYear();
-    if (now.getMonth() < birth.getMonth() || (now.getMonth() === birth.getMonth() && now.getDate() < birth.getDate())) {
-      age--;
-    }
-    return age > 0 ? age : 25;
-  }, [user]);
-
   const activeIdx = activeMilestone ? list.findIndex((m) => m.id === activeMilestone.id) : -1;
   const prevMilestone = activeIdx > 0 ? list[activeIdx - 1] : undefined;
 
@@ -146,45 +247,20 @@ export function MemberProgress() {
   return (
     <>
       <PageHead
-        title="Tiến Độ Thể Hình, Biểu Đồ Mốc Đo & AI Dinh Dưỡng"
+        title="Tiến Độ Thể Hình, Biểu Đồ Mốc Đo"
         desc={
           first
             ? `Lộ trình từ ${fmtDate(first.date)} đến ${fmtDate(last!.date)} · Đã lưu ${list.length} mốc đo InBody.`
-            : 'Ghi nhận mốc đo đầu tiên để theo dõi lộ trình thay đổi vóc dáng và nhận thực đơn dinh dưỡng chuẩn.'
+            : 'Ghi nhận mốc đo đầu tiên để theo dõi lộ trình thay đổi chỉ số cơ thể InBody.'
         }
         actions={
-          <div className="row" style={{ gap: 10 }}>
-            <button className="btn" onClick={() => setActiveTab(activeTab === 'progress' ? 'nutrition' : 'progress')}>
-              <Sparkles size={15} color="var(--amber)" />
-              {activeTab === 'progress' ? 'Mở AI Dinh Dưỡng' : 'Quay lại Biểu đồ'}
-            </button>
-            <button className="btn primary" onClick={() => setOpenAddModal(true)} id="add-metric">
-              <Plus size={16} /> Thêm chỉ số / Mốc đo mới
-            </button>
-          </div>
+          <button className="btn primary" onClick={() => setOpenAddModal(true)} id="add-metric">
+            <Plus size={16} /> Thêm chỉ số / Mốc đo mới
+          </button>
         }
       />
 
-      {/* TABS CHUYỂN ĐỔI: TIẾN ĐỘ & BIỂU ĐỒ vs AI DINH DƯỠNG */}
-      <div className="chips mb16">
-        <button
-          className={`chip ${activeTab === 'progress' ? 'on' : ''}`}
-          onClick={() => setActiveTab('progress')}
-          style={{ padding: '8px 18px', fontSize: 13.5 }}
-        >
-          <Activity size={15} style={{ marginRight: 6, verticalAlign: -2 }} /> 1. Biểu đồ tiến độ & Lịch sử từng mốc đo ({list.length})
-        </button>
-        <button
-          className={`chip ${activeTab === 'nutrition' ? 'on' : ''}`}
-          onClick={() => setActiveTab('nutrition')}
-          style={{ padding: '8px 18px', fontSize: 13.5 }}
-        >
-          <Sparkles size={15} style={{ marginRight: 6, verticalAlign: -2, color: 'var(--amber)' }} /> 2. AI Gợi ý chế độ dinh dưỡng cá nhân hóa
-        </button>
-      </div>
-
-      {activeTab === 'progress' ? (
-        !last ? (
+      {!last ? (
           <div className="card" style={{ padding: 48, textAlign: 'center' }}>
             <Empty
               text="Chưa có mốc đo nào được lưu. Hãy bấm 'Thêm chỉ số / Mốc đo mới' để bắt đầu vẽ biểu đồ tiến độ!"
@@ -460,12 +536,6 @@ export function MemberProgress() {
                       >
                         <Eye size={14} /> Mở bảng so sánh đầy đủ
                       </button>
-                      <button
-                        className="btn sm primary"
-                        onClick={() => setActiveTab('nutrition')}
-                      >
-                        <Sparkles size={14} /> Tính thực đơn AI theo mốc này
-                      </button>
                     </div>
                   </div>
 
@@ -622,9 +692,7 @@ export function MemberProgress() {
                                 title="Xóa bản ghi này"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  act((d) => {
-                                    d.bodyMetrics = d.bodyMetrics.filter((x) => x.id !== m.id);
-                                  }, 'Đã xóa bản ghi mốc đo');
+                                  handleDeleteMeasurement(m.id);
                                 }}
                               >
                                 <Trash2 size={15} color="var(--red)" />
@@ -639,17 +707,6 @@ export function MemberProgress() {
               </div>
             </div>
           </>
-        )
-      ) : (
-        /* TAB 2: AI GỢI Ý CHẾ ĐỘ DINH DƯỠNG (NUTRITION ADVISOR) */
-        <NutritionAdvisor
-          user={user!}
-          metrics={list}
-          defaultWeight={activeMilestone?.weight ?? last?.weight ?? 65}
-          defaultHeight={activeMilestone?.height ?? last?.height ?? 170}
-          defaultBodyFat={activeMilestone?.bodyFat ?? last?.bodyFat ?? 20}
-          defaultAge={userAge}
-        />
       )}
 
       {/* MODAL THÊM CHỈ SỐ MỚI */}
@@ -662,6 +719,7 @@ export function MemberProgress() {
           lastChest={last?.chest}
           lastWaist={last?.waist}
           lastHips={last?.hips}
+          onSaved={fetchMeasurements}
           onClose={() => setOpenAddModal(false)}
         />
       )}
@@ -900,7 +958,7 @@ function CheckpointDetailModal({
               ? '👍 Bạn đang giảm cân ổn định. Tiếp tục duy trì lượng Protein để bảo toàn cơ bắp nhé.'
               : muscleDeltaBase != null && muscleDeltaBase > 0
               ? '💪 Bạn đang tăng trưởng khối lượng cơ bắp hiệu quả. Hãy duy trì thặng dư calo vừa phải.'
-              : '🌟 Cơ thể đang duy trì trạng thái ổn định. Bạn có thể điều chỉnh chế độ dinh dưỡng với AI tab bên cạnh để bứt phá mục tiêu.'}
+              : '🌟 Cơ thể đang duy trì trạng thái ổn định. Tiếp tục duy trì lịch tập đều đặn để bứt phá mục tiêu.'}
           </p>
         </div>
       </div>
@@ -917,6 +975,7 @@ function MetricModal({
   lastChest,
   lastWaist,
   lastHips,
+  onSaved,
   onClose,
 }: {
   lastHeight?: number;
@@ -926,9 +985,10 @@ function MetricModal({
   lastChest?: number;
   lastWaist?: number;
   lastHips?: number;
+  onSaved?: () => void;
   onClose: () => void;
 }) {
-  const { user, act } = useApp();
+  const { user, act, toast } = useApp();
   const [f, setF] = useState({
     date: todayStr(),
     weight: String(lastWeight ?? ''),
@@ -943,13 +1003,14 @@ function MetricModal({
 
   const bmi = calcBMI(+f.weight, +f.height);
 
-  const save = () => {
-    const r = act((d) => {
-      if (!+f.weight || !+f.height) throw new Error('Vui lòng nhập cân nặng và chiều cao hợp lệ');
-      d.bodyMetrics.push({
-        id: genId('bm'),
-        memberId: user!.id,
-        date: f.date,
+  const save = async () => {
+    if (!+f.weight || !+f.height) {
+      toast('Vui lòng nhập cân nặng và chiều cao hợp lệ', 'error');
+      return;
+    }
+
+    try {
+      await bodyMeasurementsApi.createMeasurement({
         weight: +f.weight,
         height: +f.height,
         bmi,
@@ -959,10 +1020,34 @@ function MetricModal({
         waist: f.waist ? +f.waist : undefined,
         hips: f.hips ? +f.hips : undefined,
         note: f.note,
+        measuredAt: f.date ? `${f.date}T00:00:00Z` : undefined,
       });
-      return true;
-    }, 'Đã lưu mốc đo chỉ số cơ thể');
-    if (r) onClose();
+      toast('Đã lưu mốc đo chỉ số cơ thể thành công', 'success');
+      onSaved?.();
+      onClose();
+    } catch {
+      const r = act((d) => {
+        d.bodyMetrics.push({
+          id: genId('bm'),
+          memberId: user!.id,
+          date: f.date,
+          weight: +f.weight,
+          height: +f.height,
+          bmi,
+          bodyFat: f.bodyFat ? +f.bodyFat : undefined,
+          muscleMass: f.muscleMass ? +f.muscleMass : undefined,
+          chest: f.chest ? +f.chest : undefined,
+          waist: f.waist ? +f.waist : undefined,
+          hips: f.hips ? +f.hips : undefined,
+          note: f.note,
+        });
+        return true;
+      }, 'Đã lưu mốc đo chỉ số cơ thể');
+      if (r) {
+        onSaved?.();
+        onClose();
+      }
+    }
   };
 
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
@@ -1080,409 +1165,47 @@ function MetricModal({
   );
 }
 
-/* ================= COMPONENT AI GỢI Ý CHẾ ĐỘ DINH DƯỠNG ================= */
-function NutritionAdvisor({
-  user,
-  metrics,
-  defaultWeight,
-  defaultHeight,
-  defaultBodyFat,
-  defaultAge,
-}: {
-  user: User;
-  metrics: BodyMetric[];
-  defaultWeight: number;
-  defaultHeight: number;
-  defaultBodyFat: number;
-  defaultAge: number;
-}) {
-  const [gender, setGender] = useState<'male' | 'female' | 'other'>(user.gender || 'male');
-  const [age, setAge] = useState<number>(defaultAge);
-  const [weight, setWeight] = useState<number>(defaultWeight);
-  const [height, setHeight] = useState<number>(defaultHeight);
-  const [bodyFat, setBodyFat] = useState<number>(defaultBodyFat);
-  const [copied, setCopied] = useState(false);
-
-  const [goal, setGoal] = useState<'lose_fat' | 'build_muscle' | 'maintain' | 'endurance'>('lose_fat');
-  const [activityLevel, setActivityLevel] = useState<'sedentary' | 'light' | 'moderate' | 'high'>('moderate');
-  const [dietStyle, setDietStyle] = useState<'eat_clean' | 'high_protein' | 'vegetarian' | 'low_carb'>('high_protein');
-  const [dayMode, setDayMode] = useState<'training' | 'rest'>('training');
-
-  // Tính toán kế hoạch dinh dưỡng bằng thuật toán OOAD AI
-  const plan = useMemo(() => {
-    const basePlan = L.calculateNutritionPlan({
-      gender,
-      age: +age || 25,
-      weight: +weight || 65,
-      height: +height || 170,
-      bodyFat: +bodyFat || undefined,
-      goal,
-      activityLevel,
-      dietStyle,
-    });
-    if (dayMode === 'rest') {
-      const restCal = Math.max(1200, basePlan.targetCalories - 180);
-      return {
-        ...basePlan,
-        targetCalories: restCal,
-        deficitOrSurplus: restCal - basePlan.tdee,
-        macros: {
-          ...basePlan.macros,
-          carbs: Math.max(60, basePlan.macros.carbs - 45),
-        },
-      };
-    }
-    return basePlan;
-  }, [gender, age, weight, height, bodyFat, goal, activityLevel, dietStyle, dayMode]);
-
-  const applyMilestone = (m: BodyMetric) => {
-    setWeight(m.weight);
-    setHeight(m.height);
-    if (m.bodyFat != null) setBodyFat(m.bodyFat);
-  };
-
-  const copyPlan = () => {
-    const text = `=== THỰC ĐƠN DINH DƯỠNG OOAD AI ===\n` +
-      `Mục tiêu: ${plan.goalLabel}\n` +
-      `Calo mục tiêu: ${plan.targetCalories} kcal/ngày (BMR: ${plan.bmr}, TDEE: ${plan.tdee})\n` +
-      `Macros: Protein ${plan.macros.protein}g · Carbs ${plan.macros.carbs}g · Fat ${plan.macros.fat}g\n` +
-      `Nước uống: ${plan.waterLiters} lít/ngày\n\n` +
-      plan.meals.map((m) => `[${m.time}] ${m.name} (${m.calories} kcal):\n- ${m.description}\n- Thực phẩm: ${m.items.join(', ')}`).join('\n\n') +
-      `\n\nLời khuyên: \n` + plan.tips.map((t) => `• ${t}`).join('\n');
-
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
-  };
-
-  return (
-    <div className="col" style={{ gap: 18 }}>
-      {/* BANNER GIỚI THIỆU AI NUTRITION */}
-      <div
-        className="card"
-        style={{
-          background: 'linear-gradient(135deg, rgba(124, 92, 255, 0.15), rgba(0, 209, 178, 0.12))',
-          borderColor: 'rgba(124, 92, 255, 0.35)',
-          padding: 20,
-        }}
-      >
-        <div className="row between wrap" style={{ gap: 12 }}>
-          <div className="row" style={{ gap: 14 }}>
-            <div
-              style={{
-                width: 48,
-                height: 48,
-                borderRadius: 14,
-                background: 'var(--primary)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#fff',
-              }}
-            >
-              <Sparkles size={24} />
-            </div>
-            <div>
-              <div className="row" style={{ gap: 8 }}>
-                <h2 style={{ fontSize: 18 }}>OOAD AI Nutrition Coach</h2>
-                <Badge color="purple">Thuật toán Mifflin-St Jeor Chuẩn Thể Hình</Badge>
-              </div>
-              <p className="small muted mt4">
-                Hệ thống tự động tính toán BMR, TDEE, thâm hụt/thặng dư calo, phân chia tỷ lệ Macros (Protein/Carb/Fat) và gợi ý 5 bữa ăn chi tiết theo thể trạng thực tế của bạn.
-              </p>
-            </div>
-          </div>
-
-          <button className="btn sm ghost" onClick={copyPlan} style={{ gap: 6 }}>
-            {copied ? <Check size={15} color="var(--green)" /> : <Copy size={15} />}
-            {copied ? 'Đã sao chép thực đơn!' : 'Sao chép thực đơn'}
-          </button>
-        </div>
-      </div>
-
-      {/* BỘ ĐIỀU KHIỂN THỂ TRẠNG & MỤC TIÊU CỦA HỘI VIÊN */}
-      <div className="card" style={{ padding: 18 }}>
-        <div className="row between wrap mb12" style={{ gap: 10 }}>
-          <h3 style={{ fontSize: 15 }}>⚙️ Cấu hình thể trạng & Đồng bộ từ Mốc đo InBody</h3>
-          <div className="tabs" style={{ padding: 3 }}>
-            <button className={`tab ${dayMode === 'training' ? 'on' : ''}`} onClick={() => setDayMode('training')}>
-              🔥 Ngày có tập luyện
-            </button>
-            <button className={`tab ${dayMode === 'rest' ? 'on' : ''}`} onClick={() => setDayMode('rest')}>
-              🌿 Ngày nghỉ phục hồi (-180 kcal)
-            </button>
-          </div>
-        </div>
-
-        {metrics.length > 0 && (
-          <div className="mb16" style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 10 }}>
-            <div className="small bold muted mb6">Đồng bộ nhanh chỉ số từ lịch sử mốc đo của bạn:</div>
-            <div className="chips">
-              {metrics.map((m, idx) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  className={`chip ${weight === m.weight && bodyFat === (m.bodyFat ?? bodyFat) ? 'on' : ''}`}
-                  onClick={() => applyMilestone(m)}
-                >
-                  Lần {idx + 1} ({fmtDate(m.date).slice(0, 5)}): {m.weight}kg {m.bodyFat ? `· ${m.bodyFat}% mỡ` : ''}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="grid g4 mb16" style={{ gap: 12 }}>
-          <div className="field">
-            <label className="small">Giới tính</label>
-            <select
-              className="input sm"
-              value={gender}
-              onChange={(e) => setGender(e.target.value as 'male' | 'female' | 'other')}
-            >
-              <option value="male">Nam giới</option>
-              <option value="female">Nữ giới</option>
-              <option value="other">Khác</option>
-            </select>
-          </div>
-
-          <div className="field">
-            <label className="small">Tuổi</label>
-            <input type="number" className="input sm" value={age} onChange={(e) => setAge(+e.target.value)} />
-          </div>
-
-          <div className="field">
-            <label className="small">Cân nặng (kg)</label>
-            <input type="number" step="0.5" className="input sm" value={weight} onChange={(e) => setWeight(+e.target.value)} />
-          </div>
-
-          <div className="field">
-            <label className="small">Chiều cao (cm)</label>
-            <input type="number" className="input sm" value={height} onChange={(e) => setHeight(+e.target.value)} />
-          </div>
-        </div>
-
-        <div className="grid g3" style={{ gap: 14 }}>
-          {/* MỤC TIÊU THỂ HÌNH */}
-          <div className="field">
-            <label className="small bold">🎯 Mục tiêu của bạn</label>
-            <select
-              className="input sm"
-              value={goal}
-              onChange={(e) => setGoal(e.target.value as 'lose_fat' | 'build_muscle' | 'maintain' | 'endurance')}
-            >
-              <option value="lose_fat">Giảm mỡ & Siết cơ (Fat Loss & Cut -500 kcal)</option>
-              <option value="build_muscle">Tăng cơ nạc (Lean Bulking +350 kcal)</option>
-              <option value="maintain">Duy trì vóc dáng & Thể lực (Maintenance)</option>
-              <option value="endurance">Tăng sức bền & Tim mạch (Endurance +150 kcal)</option>
-            </select>
-          </div>
-
-          {/* CƯỜNG ĐỘ VẬN ĐỘNG */}
-          <div className="field">
-            <label className="small bold">⚡ Mức độ vận động / Tuần</label>
-            <select
-              className="input sm"
-              value={activityLevel}
-              onChange={(e) => setActivityLevel(e.target.value as 'sedentary' | 'light' | 'moderate' | 'high')}
-            >
-              <option value="sedentary">Ít vận động (Văn phòng, 1.2x BMR)</option>
-              <option value="light">Vận động nhẹ (Tập 1-2 buổi/tuần, 1.375x BMR)</option>
-              <option value="moderate">Vừa phải (Tập 3-5 buổi/tuần, 1.55x BMR)</option>
-              <option value="high">Cường độ cao (Tập 6-7 buổi/tuần, 1.725x BMR)</option>
-            </select>
-          </div>
-
-          {/* PHONG CÁCH ẨM THỰC */}
-          <div className="field">
-            <label className="small bold">🥗 Phong cách ăn uống</label>
-            <select
-              className="input sm"
-              value={dietStyle}
-              onChange={(e) => setDietStyle(e.target.value as 'eat_clean' | 'high_protein' | 'vegetarian' | 'low_carb')}
-            >
-              <option value="high_protein">High Protein (Gymer, tăng cơ giảm mỡ)</option>
-              <option value="eat_clean">Eat Clean & Cân bằng (Healthy Lifestyle)</option>
-              <option value="low_carb">Low Carb (Hạn chế tinh bột)</option>
-              <option value="vegetarian">Ăn chay / Thực vật (Plant-based)</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* KẾT QUẢ TÍNH TOÁN NĂNG LƯỢNG & MACROS */}
-      <div className="grid g4">
-        <div className="card" style={{ borderLeft: '4px solid #a78bfa', padding: 16 }}>
-          <span className="small muted">BMR (Năng lượng nền)</span>
-          <div style={{ fontSize: 24, fontWeight: 800, marginTop: 4, color: '#a78bfa' }}>
-            {plan.bmr} <span style={{ fontSize: 13, fontWeight: 500 }}>kcal</span>
-          </div>
-          <span className="small dim mt4">Năng lượng duy trì sự sống</span>
-        </div>
-
-        <div className="card" style={{ borderLeft: '4px solid #3fa9ff', padding: 16 }}>
-          <span className="small muted">TDEE (Tổng tiêu hao/ngày)</span>
-          <div style={{ fontSize: 24, fontWeight: 800, marginTop: 4, color: '#3fa9ff' }}>
-            {plan.tdee} <span style={{ fontSize: 13, fontWeight: 500 }}>kcal</span>
-          </div>
-          <span className="small dim mt4">Bao gồm cả tập luyện</span>
-        </div>
-
-        <div className="card" style={{ borderLeft: '4px solid #00d1b2', padding: 16, background: 'rgba(0, 209, 178, 0.05)' }}>
-          <span className="small muted">Calo Mục Tiêu AI Khuyên</span>
-          <div style={{ fontSize: 24, fontWeight: 800, marginTop: 4, color: '#00d1b2' }}>
-            {plan.targetCalories} <span style={{ fontSize: 13, fontWeight: 500 }}>kcal/ngày</span>
-          </div>
-          <div className="row mt4 small" style={{ gap: 4 }}>
-            <Badge color={plan.deficitOrSurplus < 0 ? 'amber' : plan.deficitOrSurplus > 0 ? 'green' : 'blue'}>
-              {plan.deficitOrSurplus > 0 ? `+${plan.deficitOrSurplus}` : plan.deficitOrSurplus} kcal
-            </Badge>
-            <span className="dim">so với TDEE</span>
-          </div>
-        </div>
-
-        <div className="card" style={{ borderLeft: '4px solid #ff8fb0', padding: 16 }}>
-          <span className="small muted">Lượng nước cần nạp</span>
-          <div style={{ fontSize: 24, fontWeight: 800, marginTop: 4, color: '#ff8fb0' }}>
-            {plan.waterLiters} <span style={{ fontSize: 13, fontWeight: 500 }}>lít/ngày</span>
-          </div>
-          <span className="small dim mt4">Đảm bảo trao đổi chất tốt</span>
-        </div>
-      </div>
-
-      {/* PHÂN BỔ MACROS (PROTEIN - CARBS - FAT) */}
-      <div className="card">
-        <div className="card-head between">
-          <h2><Apple size={18} /> Tỷ lệ phân bổ Macros (Đa lượng) mỗi ngày</h2>
-          <span className="small muted">Tổng năng lượng: {plan.targetCalories} kcal</span>
-        </div>
-
-        <div className="grid g3 mb16" style={{ gap: 12 }}>
-          <div className="card" style={{ padding: 14, background: 'rgba(0, 209, 178, 0.08)' }}>
-            <div className="row between">
-              <span className="bold" style={{ color: '#00d1b2' }}>🍗 Đạm (Protein)</span>
-              <Badge color="green">{Math.round((plan.macros.protein * 4 / plan.targetCalories) * 100)}%</Badge>
-            </div>
-            <div style={{ fontSize: 22, fontWeight: 800, margin: '6px 0' }}>
-              {plan.macros.protein} g
-            </div>
-            <span className="small dim">Tương đương {plan.macros.protein * 4} kcal để tái tạo mô cơ</span>
-          </div>
-
-          <div className="card" style={{ padding: 14, background: 'rgba(255, 176, 32, 0.08)' }}>
-            <div className="row between">
-              <span className="bold" style={{ color: '#ffb020' }}>🍚 Tinh bột (Carbs)</span>
-              <Badge color="amber">{Math.round((plan.macros.carbs * 4 / plan.targetCalories) * 100)}%</Badge>
-            </div>
-            <div style={{ fontSize: 22, fontWeight: 800, margin: '6px 0' }}>
-              {plan.macros.carbs} g
-            </div>
-            <span className="small dim">Tương đương {plan.macros.carbs * 4} kcal cung cấp năng lượng</span>
-          </div>
-
-          <div className="card" style={{ padding: 14, background: 'rgba(255, 92, 138, 0.08)' }}>
-            <div className="row between">
-              <span className="bold" style={{ color: '#ff5c8a' }}>🥑 Chất béo tốt (Fats)</span>
-              <Badge color="red">{Math.round((plan.macros.fat * 9 / plan.targetCalories) * 100)}%</Badge>
-            </div>
-            <div style={{ fontSize: 22, fontWeight: 800, margin: '6px 0' }}>
-              {plan.macros.fat} g
-            </div>
-            <span className="small dim">Tương đương {plan.macros.fat * 9} kcal điều hòa hormone</span>
-          </div>
-        </div>
-
-        {/* Thanh trực quan Macros */}
-        <div style={{ height: 10, width: '100%', background: 'var(--surface-2)', borderRadius: 99, display: 'flex', overflow: 'hidden' }}>
-          <div style={{ width: `${Math.round((plan.macros.protein * 4 / plan.targetCalories) * 100)}%`, background: '#00d1b2' }} title="Protein" />
-          <div style={{ width: `${Math.round((plan.macros.carbs * 4 / plan.targetCalories) * 100)}%`, background: '#ffb020' }} title="Carbs" />
-          <div style={{ width: `${Math.round((plan.macros.fat * 9 / plan.targetCalories) * 100)}%`, background: '#ff5c8a' }} title="Fats" />
-        </div>
-      </div>
-
-      {/* THỰC ĐƠN 5 BỮA TRONG NGÀY ĐƯỢC AI THIẾT KẾ CHI TIẾT */}
-      <div className="card">
-        <div className="card-head between">
-          <div>
-            <h2><Utensils size={18} /> Gợi ý thực đơn 5 bữa trong ngày theo mục tiêu</h2>
-            <span className="small muted">Chia nhỏ bữa ăn giúp cơ thể hấp thu tối đa dinh dưỡng và kiểm soát cơn đói</span>
-          </div>
-          <Badge color="purple">{plan.goalLabel}</Badge>
-        </div>
-
-        <div className="col" style={{ gap: 12 }}>
-          {plan.meals.map((meal, index) => (
-            <div
-              key={index}
-              className="card hover"
-              style={{
-                padding: 16,
-                borderLeft: `5px solid ${index === 0 ? '#ffb020' : index === 2 ? '#00d1b2' : index === 4 ? '#a78bfa' : '#3fa9ff'}`,
-                background: 'var(--surface)',
-              }}
-            >
-              <div className="row between wrap mb8" style={{ gap: 8 }}>
-                <div className="row" style={{ gap: 10 }}>
-                  <span className="badge b-purple">{meal.time}</span>
-                  <h3 style={{ fontSize: 16 }}>{meal.name}</h3>
-                </div>
-                <div className="row" style={{ gap: 8 }}>
-                  <span className="bold" style={{ color: 'var(--primary)', fontSize: 15 }}>
-                    ~{meal.calories} kcal
-                  </span>
-                </div>
-              </div>
-
-              <p className="small muted mb8" style={{ lineHeight: 1.5 }}>
-                {meal.description}
-              </p>
-
-              <div className="row wrap" style={{ gap: 6 }}>
-                {meal.items.map((item, i) => (
-                  <span
-                    key={i}
-                    style={{
-                      background: 'var(--surface-2)',
-                      padding: '4px 10px',
-                      borderRadius: 6,
-                      fontSize: 12,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                    }}
-                  >
-                    ✓ {item}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* LỜI KHUYÊN DINH DƯỠNG & NGUYÊN TẮC VÀNG */}
-      <div className="card" style={{ background: 'var(--surface-2)' }}>
-        <h3 className="mb12" style={{ fontSize: 16 }}>💡 Nguyên tắc vàng từ OOAD Nutrition AI</h3>
-        <div className="grid g2" style={{ gap: 12 }}>
-          {plan.tips.map((tip, idx) => (
-            <div key={idx} className="card" style={{ padding: 12, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-              <span style={{ color: 'var(--primary)', fontWeight: 800, fontSize: 14 }}>0{idx + 1}.</span>
-              <p className="small muted" style={{ margin: 0, lineHeight: 1.5 }}>{tip}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ================= Thẻ hội viên ================= */
 export function MemberCard() {
   const { db, user } = useApp();
+  const [apiMode, setApiMode] = useState<boolean>(!!getAuthToken());
+  const [apiHistory, setApiHistory] = useState<ApiCheckinDto[]>([]);
+  const [apiMemberships, setApiMemberships] = useState<ApiMembershipDto[]>([]);
+
+  useEffect(() => {
+    if (!getAuthToken()) {
+      setApiMode(false);
+      return;
+    }
+    let cancelled = false;
+    Promise.all([
+      checkinsApi.getMyHistory().catch(() => [] as ApiCheckinDto[]),
+      membershipPlansApi.getMyMemberships().catch(() => [] as ApiMembershipDto[]),
+    ])
+      .then(([ciList, msList]) => {
+        if (cancelled) return;
+        setApiHistory(ciList);
+        setApiMemberships(msList);
+        setApiMode(true);
+      })
+      .catch(() => {
+        if (!cancelled) setApiMode(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const cur = L.membershipOn(db, user!.id);
   const plan = cur ? L.planById(db, cur.planId) : undefined;
   const open = L.openCheckin(db, user!.id);
   const history = db.checkins.filter((c) => c.memberId === user!.id).slice(0, 12);
+
+  const apiOpen = apiHistory.find((c) => !c.checkOutAt);
+  const apiActiveGym = apiMemberships.find(
+    (m) => m.planType.toUpperCase() !== 'PT' && m.status.toLowerCase() === 'active',
+  );
+
   return (
     <>
       <PageHead title="Thẻ hội viên" desc="Đưa mã QR này vào máy quét tại quầy để check-in / check-out hoặc báo mất thẻ khẩn cấp." />
@@ -1490,17 +1213,60 @@ export function MemberCard() {
         <div className="col" style={{ gap: 18 }}>
           <MemberCardWidget memberId={user!.id} showHistory />
           <div className="card">
-            {open ? (
-              <div className="row"><span className="live-dot" /><div><b>Đang tập tại {L.branchById(db, open.branchId)?.name}</b><div className="small muted">Check-in lúc {fmtTime(open.checkInAt)} · nhớ check-out khi ra về (tự động check-out lúc đóng cửa)</div></div></div>
+            {apiMode ? (
+              <>
+                {apiOpen ? (
+                  <div className="row">
+                    <span className="live-dot" />
+                    <div>
+                      <b>Đang tập tại {apiOpen.branchName}</b>
+                      <div className="small muted">Check-in lúc {fmtTime(apiOpen.checkInAt)} · nhớ check-out khi ra về (tự động check-out lúc đóng cửa)</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="row muted"><QrCode size={18} /> Hiện bạn không ở phòng tập.</div>
+                )}
+                {apiActiveGym && (
+                  <div className="small muted mt16">
+                    <MapPin size={13} /> {apiActiveGym.planName} · {apiActiveGym.isAllBranches ? 'Tất cả chi nhánh' : apiActiveGym.branchName || 'Theo chi nhánh'}
+                  </div>
+                )}
+              </>
             ) : (
-              <div className="row muted"><QrCode size={18} /> Hiện bạn không ở phòng tập.</div>
+              <>
+                {open ? (
+                  <div className="row"><span className="live-dot" /><div><b>Đang tập tại {L.branchById(db, open.branchId)?.name}</b><div className="small muted">Check-in lúc {fmtTime(open.checkInAt)} · nhớ check-out khi ra về (tự động check-out lúc đóng cửa)</div></div></div>
+                ) : (
+                  <div className="row muted"><QrCode size={18} /> Hiện bạn không ở phòng tập.</div>
+                )}
+                {plan && <div className="small muted mt16"><MapPin size={13} /> Áp dụng: {L.scopeLabel(db, plan.branchScope)}</div>}
+              </>
             )}
-            {plan && <div className="small muted mt16"><MapPin size={13} /> Áp dụng: {L.scopeLabel(db, plan.branchScope)}</div>}
           </div>
         </div>
         <div className="card">
           <div className="card-head"><h2><Clock size={18} /> Lịch sử ra/vào</h2></div>
-          {history.length === 0 ? <Empty text="Chưa có lượt check-in" /> : (
+          {apiMode ? (
+            apiHistory.length === 0 ? <Empty text="Chưa có lượt check-in" /> : (
+              <div className="col">
+                {apiHistory.slice(0, 12).map((c) => (
+                  <div className="list-item" key={c.id}>
+                    <div className="grow">
+                      <div className="bold">{c.branchName}</div>
+                      <div className="small muted">
+                        {fmtDateTime(c.checkInAt)}
+                        {c.checkOutAt && ` → ${fmtTime(c.checkOutAt)}`}
+                        {c.method.toLowerCase() === 'manual' && ' · Lễ tân nhập tay'}
+                        {c.isAutoCheckout && ' · Tự động check-out'}
+                      </div>
+                      {c.attendedClassName && <div className="small" style={{ color: 'var(--primary)' }}>Điểm danh: {c.attendedClassName}</div>}
+                    </div>
+                    <Badge color="green">Hợp lệ</Badge>
+                  </div>
+                ))}
+              </div>
+            )
+          ) : history.length === 0 ? <Empty text="Chưa có lượt check-in" /> : (
             <div className="col">
               {history.map((c) => (
                 <div className="list-item" key={c.id}>
@@ -1522,7 +1288,72 @@ export function MemberCard() {
 
 /* ================= Giao dịch ================= */
 export function MemberPayments() {
-  const { db, user } = useApp();
+  const { db, user, toast } = useApp();
+  const [apiMode, setApiMode] = useState<boolean>(!!getAuthToken());
+  const [apiPayments, setApiPayments] = useState<ApiPaymentDto[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!getAuthToken()) {
+      setApiMode(false);
+      return;
+    }
+    setLoading(true);
+    membershipPlansApi
+      .getMyPayments()
+      .then((list) => {
+        setApiPayments(list);
+        setApiMode(true);
+      })
+      .catch((err) => {
+        if (isApiNetworkError(err)) {
+          setApiMode(false);
+        } else {
+          toast((err as Error).message, 'error');
+        }
+      })
+      .finally(() => setLoading(false));
+  }, [toast]);
+
+  if (apiMode) {
+    const total = apiPayments
+      .filter((p) => p.status.toLowerCase() === 'completed')
+      .reduce((s, p) => s + p.amount, 0);
+
+    return (
+      <>
+        <PageHead title="Lịch sử giao dịch" desc={`${apiPayments.length} giao dịch · Tổng đã thanh toán ${fmtMoney(total)}`} />
+        {loading ? (
+          <div className="card" style={{ padding: 24 }}>Đang tải lịch sử giao dịch...</div>
+        ) : apiPayments.length === 0 ? (
+          <div className="card"><Empty text="Chưa có giao dịch" icon={<Receipt size={40} />} /></div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Mã GD</th><th>Thời gian</th><th>Nội dung</th><th>Chi nhánh</th><th>Phương thức</th><th>Số tiền</th><th>Trạng thái</th></tr></thead>
+              <tbody>
+                {apiPayments.map((p) => {
+                  const ok = p.status.toLowerCase() === 'completed';
+                  return (
+                    <tr key={p.id}>
+                      <td className="small dim" style={{ fontFamily: 'monospace' }}>{(p.gatewayTxnCode || p.id).toUpperCase().slice(0, 16)}</td>
+                      <td className="small">{fmtDateTime(p.paidAt || p.createdAt)}</td>
+                      <td>{p.description}</td>
+                      <td className="small">{p.branchName || 'Toàn hệ thống'}</td>
+                      <td className="small">{formatPaymentMethod(p.method)}</td>
+                      <td className="bold">{fmtMoney(p.amount)}</td>
+                      <td><Badge color={ok ? 'green' : 'red'}>{ok ? 'Thành công' : 'Thất bại'}</Badge></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </>
+    );
+  }
+
   const list = db.payments.filter((p) => p.memberId === user!.id);
   const total = list.filter((p) => p.status === 'success').reduce((s, p) => s + p.amount, 0);
   return (
@@ -1539,7 +1370,7 @@ export function MemberPayments() {
                   <td className="small">{fmtDateTime(p.createdAt)}</td>
                   <td>{p.description}</td>
                   <td className="small">{L.branchById(db, p.branchId)?.name}</td>
-                  <td className="small">{methodLabel[p.method]}</td>
+                  <td className="small">{formatPaymentMethod(p.method)}</td>
                   <td className="bold">{fmtMoney(p.amount)}</td>
                   <td><Badge color={p.status === 'success' ? 'green' : 'red'}>{p.status === 'success' ? 'Thành công' : 'Thất bại'}</Badge></td>
                 </tr>
@@ -1554,47 +1385,181 @@ export function MemberPayments() {
 
 /* ================= Báo thiết bị hỏng ================= */
 export function MemberEquipment() {
-  const { db, user, act } = useApp();
+  const { db, user } = useApp();
   const [tab, setTab] = useState<'mine' | 'new'>('mine');
-  const [branch, setBranch] = useState(db.branches[0].id);
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
+  const [equipments, setEquipments] = useState<Equipment[]>([]);
+  const [reports, setReports] = useState<EquipmentReport[]>([]);
+  const [branch, setBranch] = useState('');
   const [eq, setEq] = useState('');
   const [desc, setDesc] = useState('');
-  const mine = db.equipmentReports.filter((r) => r.reporterId === user!.id);
-  const eqs = db.equipment.filter((e) => e.branchId === branch && e.status !== 'retired');
-  const submit = () => {
-    const r = act((d) => { if (!eq) throw new Error('Chọn thiết bị'); if (!desc.trim()) throw new Error('Mô tả sự cố'); L.reportEquipment(d, user!.id, eq, desc.trim()); return true; }, 'Đã gửi phản ánh, cảm ơn bạn!');
-    if (r) { setDesc(''); setEq(''); setTab('mine'); }
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState('');
+  const [msg, setMsg] = useState('');
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setErr('');
+    try {
+      const [brList, eqList, repList] = await Promise.all([
+        request<{ id: string; name: string }[]>('/branches').catch(() => db.branches),
+        equipmentsApi.getAll(),
+        equipmentsApi.getReports(),
+      ]);
+      setBranches(brList);
+      setEquipments(eqList);
+      setReports(repList);
+      setBranch((prev) => prev || brList[0]?.id || '');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Không thể tải dữ liệu thiết bị');
+    } finally {
+      setLoading(false);
+    }
+  }, [db.branches]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const mine = useMemo(
+    () => reports.filter((r) => !r.reporterId || r.reporterId === user?.id),
+    [reports, user?.id]
+  );
+
+  const eqs = useMemo(
+    () => equipments.filter((e) => (!branch || e.branchId === branch) && e.status !== 'retired'),
+    [equipments, branch]
+  );
+
+  const getEqText = (status: string) =>
+    (eqLabel as Record<string, [string, string]>)[status]?.[0] ?? status;
+
+  const getReportInfo = (status: string): [string, 'green' | 'amber' | 'red' | 'blue' | 'purple' | 'slate'] =>
+    ((reportLabel as Record<string, [string, 'green' | 'amber' | 'red' | 'blue' | 'purple' | 'slate']>)[status] ?? [status, 'slate']);
+
+  const branchName = (id?: string) =>
+    branches.find((b) => b.id === id)?.name ?? L.branchById(db, id ?? '')?.name ?? '';
+
+  const submit = async () => {
+    setErr('');
+    setMsg('');
+    if (!eq) return setErr('Vui lòng chọn thiết bị');
+    if (!desc.trim()) return setErr('Vui lòng mô tả sự cố');
+
+    setSubmitting(true);
+    try {
+      await equipmentsApi.createReport({
+        equipmentId: eq,
+        description: desc.trim(),
+      });
+      setDesc('');
+      setEq('');
+      setMsg('Đã gửi phản ánh thành công, cảm ơn bạn!');
+      setTab('mine');
+      await loadData();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Gửi phản ánh thất bại');
+    } finally {
+      setSubmitting(false);
+    }
   };
+
   return (
     <>
       <PageHead title="Phản ánh thiết bị" desc="Phát hiện thiết bị hỏng hoặc sự cố? Hãy báo cho chúng tôi." />
-      <Tabs value={tab} onChange={setTab} tabs={[{ id: 'mine', label: 'Phản ánh của tôi', count: mine.filter((r) => r.status !== 'resolved').length }, { id: 'new', label: <><Wrench size={15} /> Gửi phản ánh mới</> }]} />
-      {tab === 'new' ? (
+
+      {err && <div className="card mb12" style={{ borderColor: 'var(--red)', color: 'var(--red)', padding: 12 }}>{err}</div>}
+      {msg && <div className="card mb12" style={{ borderColor: 'var(--green)', color: 'var(--green)', padding: 12 }}>{msg}</div>}
+
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'mine', label: 'Phản ánh của tôi', count: mine.filter((r) => r.status !== 'resolved').length },
+          { id: 'new', label: <><Wrench size={15} /> Gửi phản ánh mới</> },
+        ]}
+      />
+
+      {loading ? (
+        <div className="card" style={{ padding: 24 }}>Đang tải dữ liệu thiết bị...</div>
+      ) : tab === 'new' ? (
         <div className="card" style={{ maxWidth: 720 }}>
           <div className="form-grid">
-            <div className="field"><label>Chi nhánh</label><select className="input" value={branch} onChange={(e) => { setBranch(e.target.value); setEq(''); }}>{db.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
-            <div className="field"><label>Thiết bị</label><select className="input" value={eq} onChange={(e) => setEq(e.target.value)} id="eq-select"><option value="">— Chọn thiết bị —</option>{eqs.map((e) => <option key={e.id} value={e.id}>{e.code} · {e.name} ({eqLabel[e.status][0]})</option>)}</select></div>
-            <div className="field full"><label>Mô tả sự cố</label><textarea className="input" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="VD: Băng chạy bị trượt, phát tiếng kêu..." id="eq-desc" /></div>
+            <div className="field">
+              <label>Chi nhánh</label>
+              <select className="input" value={branch} onChange={(e) => { setBranch(e.target.value); setEq(''); }}>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Thiết bị</label>
+              <select className="input" value={eq} onChange={(e) => setEq(e.target.value)} id="eq-select">
+                <option value="">— Chọn thiết bị —</option>
+                {eqs.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.code ? `${e.code} · ` : ''}{e.name} ({getEqText(e.status)})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field full">
+              <label>Mô tả sự cố</label>
+              <textarea
+                className="input"
+                value={desc}
+                onChange={(e) => setDesc(e.target.value)}
+                placeholder="VD: Băng chạy bị trượt, phát tiếng kêu..."
+                id="eq-desc"
+              />
+            </div>
           </div>
-          <div className="row mt16" style={{ justifyContent: 'flex-end' }}><button className="btn primary" onClick={submit} id="eq-submit">Gửi phản ánh</button></div>
+          <div className="row mt16" style={{ justifyContent: 'flex-end' }}>
+            <button className="btn primary" onClick={submit} disabled={submitting} id="eq-submit">
+              {submitting ? 'Đang gửi...' : 'Gửi phản ánh'}
+            </button>
+          </div>
         </div>
-      ) : mine.length === 0 ? <div className="card"><Empty text="Bạn chưa gửi phản ánh nào" /></div> : (
+      ) : mine.length === 0 ? (
+        <div className="card"><Empty text="Bạn chưa gửi phản ánh nào" /></div>
+      ) : (
         <div className="grid g2">
           {mine.map((r) => {
-            const e = db.equipment.find((x) => x.id === r.equipmentId);
+            const e = equipments.find((x) => x.id === r.equipmentId);
+            const [badgeText, badgeColor] = getReportInfo(r.status);
             return (
               <div className="card" key={r.id}>
-                <div className="row between"><div><b>{e?.name}</b><div className="small dim">{e?.code} · {L.branchById(db, r.branchId)?.name}</div></div><Badge color={reportLabel[r.status][1]}>{reportLabel[r.status][0]}</Badge></div>
-                <p className="muted mt8">{r.description}</p>
-                <div className="divider" />
-                <div className="col" style={{ gap: 8 }}>
-                  {r.updates.map((u, i) => (
-                    <div key={i} className="row small" style={{ alignItems: 'flex-start' }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 4, marginTop: 6, background: 'var(--primary-2)', flexShrink: 0 }} />
-                      <div><b>{reportLabel[u.status][0]}</b> · <span className="dim">{fmtDateTime(u.at)} · {L.userById(db, u.by)?.fullName}</span><div className="muted">{u.note}</div></div>
+                <div className="row between">
+                  <div>
+                    <b>{e?.name ?? 'Thiết bị'}</b>
+                    <div className="small dim">
+                      {e?.code ? `${e.code} · ` : ''}{branchName(r.branchId ?? e?.branchId)}
                     </div>
-                  ))}
+                  </div>
+                  <Badge color={badgeColor}>{badgeText}</Badge>
                 </div>
+                <p className="muted mt8">{r.description}</p>
+                {r.updates && r.updates.length > 0 && (
+                  <>
+                    <div className="divider" />
+                    <div className="col" style={{ gap: 8 }}>
+                      {r.updates.map((u, i) => {
+                        const [uText] = getReportInfo(u.status);
+                        return (
+                          <div key={i} className="row small" style={{ alignItems: 'flex-start' }}>
+                            <span style={{ width: 8, height: 8, borderRadius: 4, marginTop: 6, background: 'var(--primary-2)', flexShrink: 0 }} />
+                            <div>
+                              <b>{uText}</b> · <span className="dim">{fmtDateTime(u.at)} {u.by ? `· ${L.userById(db, u.by)?.fullName ?? u.by}` : ''}</span>
+                              <div className="muted">{u.note}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
             );
           })}
@@ -1603,3 +1568,4 @@ export function MemberEquipment() {
     </>
   );
 }
+

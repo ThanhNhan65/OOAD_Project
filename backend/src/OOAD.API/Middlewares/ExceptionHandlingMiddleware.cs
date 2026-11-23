@@ -147,7 +147,42 @@ public class JwtAuthenticationHandler : AuthenticationHandler<AuthenticationSche
                 NameClaimType = ClaimTypes.NameIdentifier
             };
 
-            var principal = tokenHandler.ValidateToken(token, validationParameters, out _);
+           var principal = tokenHandler.ValidateToken(token, validationParameters, out var validatedToken);
+
+            // Trích xuất các thông tin định danh và role linh hoạt từ token cũ
+            var identity = principal.Identity as ClaimsIdentity;
+            if (identity != null)
+            {
+                var emailClaim = identity.FindFirst(ClaimTypes.Email)?.Value 
+                    ?? identity.FindFirst("email")?.Value;
+
+                // Lấy giá trị role từ bất kỳ key nào có thể xuất hiện trong token
+                string? roleValue = identity.FindFirst(ClaimTypes.Role)?.Value
+                    ?? identity.FindFirst("role")?.Value
+                    ?? identity.FindFirst("Rol")?.Value
+                    ?? identity.FindFirst("http://schemas.microsoft.com/ws/2008/06/identity/claims/role")?.Value;
+
+                // Nếu là tài khoản admin mẫu mà token chưa có role thì ép cứng là "Admin"
+                if (string.IsNullOrEmpty(roleValue) && !string.IsNullOrEmpty(emailClaim) && emailClaim.Equals("admin@ooad.vn", StringComparison.OrdinalIgnoreCase))
+                {
+                    roleValue = "Admin";
+                }
+
+                // Xây dựng lại danh sách Claims chuẩn xác hoàn toàn cho .NET Core Authorization
+                var newClaims = new List<Claim>(identity.Claims);
+                
+                // Nếu tìm thấy role nhưng chưa có ClaimTypes.Role chuẩn, ta bổ sung vào
+                if (!string.IsNullOrEmpty(roleValue) && !identity.HasClaim(c => c.Type == ClaimTypes.Role))
+                {
+                    newClaims.Add(new Claim(ClaimTypes.Role, roleValue));
+                }
+
+                // Tạo lại ClaimsIdentity mới với AuthenticationType rõ ràng và chuẩn Auth của ASP.NET Core
+                // Tạo lại ClaimsIdentity mới với AuthenticationType rõ ràng và chuẩn Auth của ASP.NET Core
+                var newIdentity = new ClaimsIdentity(newClaims, Scheme.Name, ClaimTypes.NameIdentifier, ClaimTypes.Role);
+                principal = new ClaimsPrincipal(newIdentity);
+            }
+
             var ticket = new AuthenticationTicket(principal, Scheme.Name);
             return Task.FromResult(AuthenticateResult.Success(ticket));
         }

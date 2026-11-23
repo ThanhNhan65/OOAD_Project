@@ -1,12 +1,18 @@
 using OOAD.API.Extensions;
 using OOAD.API.Middlewares;
+using OOAD.API.Services;
 using OOAD.Application;
+using OOAD.Application.Common.Options;
 using OOAD.Infrastructure;
 using Microsoft.AspNetCore.Authentication;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Đăng ký các tầng kiến trúc Clean Architecture vào IoC Container
+// 1. Đăng ký cấu hình quy tắc nghiệp vụ & các tầng Clean Architecture vào IoC Container
+var businessRules = new BusinessRuleOptions();
+builder.Configuration.GetSection(BusinessRuleOptions.SectionName).Bind(businessRules);
+builder.Services.AddSingleton(businessRules);
 builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices(builder.Configuration);
 
@@ -21,9 +27,10 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
-// 3. Cấu hình Controllers & OpenAPI
+// 3. Cấu hình Controllers & OpenAPI & Background Services
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
+builder.Services.AddHostedService<WaitlistCutoffBackgroundService>();
 
 // 4. Cấu hình CORS cho Frontend React (Vite / Next.js)
 builder.Services.AddCors(options =>
@@ -39,13 +46,16 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// 5. Kích hoạt tự động tạo lại Database (28 bảng Fluent API) & Seed dữ liệu 1-A (Cứu hộ khi thầy xóa DB)
+// 5. Kích hoạt tự động tạo lại Database (28 bảng Fluent API) & Seed dữ liệu mẫu
 await app.InitialiseDatabaseAsync();
 
 // 6. Cấu hình HTTP Request Pipeline
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+    
+    // Bật giao diện test API Scalar trực quan tại đường dẫn /scalar
+    app.MapScalarApiReference();
 }
 
 app.UseHttpsRedirection();

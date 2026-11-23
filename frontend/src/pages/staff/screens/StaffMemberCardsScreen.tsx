@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Search,
   CreditCard,
@@ -8,85 +8,83 @@ import {
   ShieldAlert,
   QrCode,
   Plus,
+  RefreshCw,
 } from 'lucide-react';
 import { useApp } from '../../../store/AppContext';
-import * as L from '../../../store/logic';
 import { Avatar, Badge, Empty, Modal, PageHead, StatCard, Tabs } from '../../../components/ui';
-import { mStatusLabel, cardStatusMeta } from '../../../components/labels';
+import { cardStatusMeta } from '../../../components/labels';
 import { fmtDate } from '../../../utils';
 import {
   MemberCardWidget,
   StaffIssueCardModal,
 } from '../../../components/member-card';
-import { memberCardService } from '../../../api/memberCard.service';
-import type { CardStatus, User } from '../../../types';
+import { memberCardService, type MemberCardDto } from '../../../api/memberCard.service';
+import type { CardStatus } from '../../../types';
 
 export function StaffMemberCardsScreen() {
-  const { db, user, act } = useApp();
+  const { toast } = useApp();
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | CardStatus>('ALL');
-  const [issuingMember, setIssuingMember] = useState<User | null>(null);
-  const [viewingMember, setViewingMember] = useState<User | null>(null);
+  const [cards, setCards] = useState<MemberCardDto[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [issuingCard, setIssuingCard] = useState<MemberCardDto | null>(null);
+  const [viewingCard, setViewingCard] = useState<MemberCardDto | null>(null);
 
-  const allMembers = db.users.filter((u) => u.role === 'member');
+  const loadCards = useCallback(async () => {
+    setLoading(true);
+    try {
+      const list = await memberCardService.getMemberCards();
+      setCards(list);
+    } catch (err) {
+      toast((err as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    loadCards();
+  }, [loadCards]);
+
+  // Mỗi hội viên lấy thẻ mới nhất (đã được sắp xếp từ backend) làm thẻ chính để hiển thị 1 dòng/hội viên
+  const primaryCardsByMember = Array.from(
+    cards.reduce((map, c) => {
+      if (!map.has(c.memberId)) map.set(c.memberId, c);
+      return map;
+    }, new Map<string, MemberCardDto>()).values(),
+  );
+
   const term = q.trim().toLowerCase();
-
-  const rows = allMembers
-    .map((m) => {
-      const cards = L.memberCardsOf(db, m.id);
-      const primary = cards[0];
-      const status: CardStatus = primary?.status || m.cardStatus || 'ACTIVE';
-      const cardCode = primary?.cardCode || m.cardCode || '—';
-      return {
-        member: m,
-        cards,
-        primary,
-        status,
-        cardCode,
-      };
-    })
-    .filter((item) => {
-      if (statusFilter !== 'ALL' && item.status !== statusFilter) return false;
-      if (!term) return true;
-      return (
-        item.member.fullName.toLowerCase().includes(term) ||
-        item.member.email.toLowerCase().includes(term) ||
-        item.member.phone.includes(term) ||
-        item.cardCode.toLowerCase().includes(term) ||
-        item.cards.some((c) => c.cardCode.toLowerCase().includes(term))
-      );
-    });
+  const filteredRows = primaryCardsByMember.filter((c) => {
+    if (statusFilter !== 'ALL' && c.status !== statusFilter) return false;
+    if (!term) return true;
+    return (
+      c.memberName.toLowerCase().includes(term) ||
+      c.memberEmail.toLowerCase().includes(term) ||
+      (c.memberPhone?.includes(term) ?? false) ||
+      c.cardCode.toLowerCase().includes(term) ||
+      (c.allCards?.some((sub) => sub.cardCode.toLowerCase().includes(term)) ?? false)
+    );
+  });
 
   const countByStatus = (st: CardStatus) =>
-    allMembers.filter((m) => (L.activeCardOf(db, m.id)?.status ?? m.cardStatus ?? 'ACTIVE') === st).length;
+    primaryCardsByMember.filter((c) => c.status === st).length;
 
   const handleChangeStatus = async (
-    cardId: string,
-    cardCode: string,
-    memberName: string,
+    card: MemberCardDto,
     newStatus: CardStatus,
     reason?: string,
   ) => {
     try {
-      await memberCardService.updateCardStatus(cardId, {
+      await memberCardService.updateCardStatus(card.id, {
         status: newStatus,
         reason,
       });
-    } catch {
-      // Fallback sang store cục bộ khi chạy ở chế độ Demo
+      toast(`Đã chuyển trạng thái thẻ ${card.cardCode} (${card.memberName}) sang ${newStatus}`, 'success');
+      await loadCards();
+    } catch (err) {
+      toast((err as Error).message, 'error');
     }
-
-    act(
-      (d) =>
-        L.updateMemberCardStatus(d, {
-          cardId,
-          status: newStatus,
-          actorId: user!.id,
-          isStaff: true,
-          reason,
-        }),
-      `Đã chuyển trạng thái thẻ ${cardCode} (${memberName}) sang ${newStatus}`,
-    );
   };
 
   return (
@@ -94,6 +92,11 @@ export function StaffMemberCardsScreen() {
       <PageHead
         title="Quản lý Thẻ hội viên & QR Code"
         desc="Lễ tân tra cứu hội viên, cấp thẻ mới (mã ngẫu nhiên bảo mật), khóa/mở khóa thẻ hoặc xử lý báo mất thẻ."
+        actions={
+          <button className="btn sm" onClick={loadCards} disabled={loading}>
+            <RefreshCw size={14} className={loading ? 'spin' : ''} /> Làm mới
+          </button>
+        }
       />
 
       {/* Thống kê nhanh */}
@@ -101,7 +104,7 @@ export function StaffMemberCardsScreen() {
         <StatCard
           icon={<CreditCard size={22} />}
           label="Tổng hội viên có thẻ"
-          value={allMembers.length}
+          value={primaryCardsByMember.length}
           color="#7c5cff"
         />
         <StatCard
@@ -131,7 +134,7 @@ export function StaffMemberCardsScreen() {
           value={statusFilter}
           onChange={setStatusFilter}
           tabs={[
-            { id: 'ALL', label: 'Tất cả hội viên', count: allMembers.length },
+            { id: 'ALL', label: 'Tất cả hội viên', count: primaryCardsByMember.length },
             { id: 'ACTIVE', label: 'Đang hoạt động (ACTIVE)', count: countByStatus('ACTIVE') },
             { id: 'LOCKED', label: 'Tạm khóa (LOCKED)', count: countByStatus('LOCKED') },
             { id: 'LOST', label: 'Báo mất (LOST)', count: countByStatus('LOST') },
@@ -164,25 +167,20 @@ export function StaffMemberCardsScreen() {
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ member, cards, primary, status, cardCode }) => {
-              const ms = L.membershipOn(db, member.id);
-              const latest = L.latestPaidMembership(db, member.id);
-              const plan = ms ? L.planById(db, ms.planId) : undefined;
-              const mSt = ms ? L.membershipStatus(db, ms) : latest ? L.membershipStatus(db, latest) : null;
-              const cardId = primary?.id || member.id;
-
+            {filteredRows.map((c) => {
+              const totalCardsCount = c.allCards?.length || 1;
               return (
-                <tr key={member.id}>
+                <tr key={c.id}>
                   <td>
                     <div className="row" style={{ gap: 10 }}>
-                      <Avatar user={member} size="sm" />
+                      <Avatar user={{ fullName: c.memberName, avatarColor: '#7c5cff' }} size="sm" />
                       <div>
                         <div className="row" style={{ gap: 6 }}>
-                          <b>{member.fullName}</b>
-                          {member.locked && <Badge color="red">TK Khóa</Badge>}
+                          <b>{c.memberName}</b>
+                          {c.userStatus === 'LOCKED' && <Badge color="red">TK Khóa</Badge>}
                         </div>
                         <div className="small dim">
-                          {member.phone} · {member.email}
+                          {c.memberPhone || '—'} · {c.memberEmail}
                         </div>
                       </div>
                     </div>
@@ -200,33 +198,31 @@ export function StaffMemberCardsScreen() {
                         background: 'var(--surface-2)',
                       }}
                     >
-                      {cardCode}
+                      {c.cardCode}
                     </span>
                   </td>
 
                   <td>
-                    <Badge color={cardStatusMeta[status].color}>
-                      {status === 'ACTIVE' && 'ACTIVE · Hoạt động'}
-                      {status === 'LOCKED' && 'LOCKED · Tạm khóa'}
-                      {status === 'LOST' && 'LOST · Đã báo mất'}
+                    <Badge color={cardStatusMeta[c.status].color}>
+                      {c.status === 'ACTIVE' && 'ACTIVE · Hoạt động'}
+                      {c.status === 'LOCKED' && 'LOCKED · Tạm khóa'}
+                      {c.status === 'LOST' && 'LOST · Đã báo mất'}
                     </Badge>
                   </td>
 
                   <td>
-                    {plan ? (
+                    {c.currentPlanName ? (
                       <div>
-                        <div className="bold small">{plan.name}</div>
-                        <div className="small dim">HSD: {fmtDate(ms!.endDate)}</div>
+                        <div className="bold small">{c.currentPlanName}</div>
+                        {c.planEndDate && <div className="small dim">HSD: {fmtDate(c.planEndDate.slice(0, 10))}</div>}
                       </div>
-                    ) : mSt ? (
-                      <Badge color={mStatusLabel[mSt][1]}>{mStatusLabel[mSt][0]}</Badge>
                     ) : (
                       <span className="small dim">Chưa có gói</span>
                     )}
                   </td>
 
                   <td>
-                    <span className="small muted">{cards.length} thẻ đã cấp</span>
+                    <span className="small muted">{totalCardsCount} thẻ đã cấp</span>
                   </td>
 
                   <td style={{ textAlign: 'right' }}>
@@ -234,24 +230,18 @@ export function StaffMemberCardsScreen() {
                       <button
                         type="button"
                         className="btn sm ghost"
-                        onClick={() => setViewingMember(member)}
+                        onClick={() => setViewingCard(c)}
                         title="Xem mã QR & lịch sử thẻ"
                       >
                         <QrCode size={15} /> QR & Lịch sử
                       </button>
 
-                      {status === 'ACTIVE' && (
+                      {c.status === 'ACTIVE' && (
                         <button
                           type="button"
                           className="btn sm"
                           onClick={() =>
-                            handleChangeStatus(
-                              cardId,
-                              cardCode,
-                              member.fullName,
-                              'LOCKED',
-                              'Lễ tân tạm khóa thẻ tại quầy',
-                            )
+                            handleChangeStatus(c, 'LOCKED', 'Lễ tân tạm khóa thẻ tại quầy')
                           }
                           title="Khóa tạm thời thẻ này"
                         >
@@ -259,18 +249,12 @@ export function StaffMemberCardsScreen() {
                         </button>
                       )}
 
-                      {status === 'LOCKED' && (
+                      {c.status === 'LOCKED' && (
                         <button
                           type="button"
                           className="btn sm success"
                           onClick={() =>
-                            handleChangeStatus(
-                              cardId,
-                              cardCode,
-                              member.fullName,
-                              'ACTIVE',
-                              'Lễ tân mở khóa thẻ tại quầy',
-                            )
+                            handleChangeStatus(c, 'ACTIVE', 'Lễ tân mở khóa thẻ tại quầy')
                           }
                           title="Mở khóa lại thẻ này"
                         >
@@ -278,18 +262,12 @@ export function StaffMemberCardsScreen() {
                         </button>
                       )}
 
-                      {status !== 'LOST' && (
+                      {c.status !== 'LOST' && (
                         <button
                           type="button"
                           className="btn sm danger"
                           onClick={() =>
-                            handleChangeStatus(
-                              cardId,
-                              cardCode,
-                              member.fullName,
-                              'LOST',
-                              'Lễ tân ghi nhận hội viên báo mất thẻ',
-                            )
+                            handleChangeStatus(c, 'LOST', 'Lễ tân ghi nhận hội viên báo mất thẻ')
                           }
                           title="Đánh dấu thẻ bị mất (Vô hiệu hóa vĩnh viễn)"
                         >
@@ -300,8 +278,8 @@ export function StaffMemberCardsScreen() {
                       <button
                         type="button"
                         className="btn sm primary"
-                        onClick={() => setIssuingMember(member)}
-                        id={`issue-card-${member.id}`}
+                        onClick={() => setIssuingCard(c)}
+                        id={`issue-card-${c.memberId}`}
                         title="Cấp thẻ mới (Thẻ cũ tự chuyển sang LOCKED/LOST)"
                       >
                         <Plus size={14} /> Cấp thẻ mới
@@ -313,7 +291,7 @@ export function StaffMemberCardsScreen() {
             })}
           </tbody>
         </table>
-        {rows.length === 0 && (
+        {!loading && filteredRows.length === 0 && (
           <Empty
             text="Không tìm thấy hội viên hoặc thẻ phù hợp với bộ lọc"
             icon={<CreditCard size={40} />}
@@ -322,38 +300,39 @@ export function StaffMemberCardsScreen() {
       </div>
 
       {/* Modal cấp thẻ mới */}
-      {issuingMember && (
+      {issuingCard && (
         <StaffIssueCardModal
-          member={issuingMember}
-          onClose={() => setIssuingMember(null)}
+          card={issuingCard}
+          onIssued={loadCards}
+          onClose={() => setIssuingCard(null)}
         />
       )}
 
       {/* Modal xem chi tiết thẻ, QR Code & Lịch sử thẻ */}
-      {viewingMember && (
+      {viewingCard && (
         <Modal
-          title={`Chi tiết Thẻ hội viên & QR Code · ${viewingMember.fullName}`}
-          onClose={() => setViewingMember(null)}
+          title={`Chi tiết Thẻ hội viên & QR Code · ${viewingCard.memberName}`}
+          onClose={() => setViewingCard(null)}
           wide
           footer={
             <div className="row between" style={{ width: '100%' }}>
               <button
                 className="btn primary"
                 onClick={() => {
-                  const target = viewingMember;
-                  setViewingMember(null);
-                  setIssuingMember(target);
+                  const target = viewingCard;
+                  setViewingCard(null);
+                  setIssuingCard(target);
                 }}
               >
                 <Plus size={15} /> Cấp đổi thẻ mới cho hội viên này
               </button>
-              <button className="btn" onClick={() => setViewingMember(null)}>
+              <button className="btn" onClick={() => setViewingCard(null)}>
                 Đóng
               </button>
             </div>
           }
         >
-          <MemberCardWidget memberId={viewingMember.id} showHistory />
+          <MemberCardWidget cardData={viewingCard} showHistory />
         </Modal>
       )}
     </>

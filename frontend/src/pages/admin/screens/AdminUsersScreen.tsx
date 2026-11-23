@@ -1,22 +1,46 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
-  UserPlus, Lock, Unlock, Edit2
+  UserPlus, Lock, Unlock, Edit2, RefreshCw,
 } from 'lucide-react';
-import { useApp } from '../../../store/AppContext';
-import * as L from '../../../store/logic';
+import { useApp, mapApiUserToAppUser } from '../../../store/AppContext';
 import { Avatar, Badge, Empty, Modal, PageHead, Tabs } from '../../../components/ui';
 import { roleLabel } from '../../../components/labels';
 import { fmtDate } from '../../../utils';
 import type { User, Role } from '../../../types';
+import { userService } from '../../../api/user.service';
+import { branchesApi, type BranchApiDto } from '../../../api/branchesApi';
 
 export function AdminUsersScreen() {
-  const { db, user: currentUser, act } = useApp();
+  const { user: currentUser, toast } = useApp();
+  const [users, setUsers] = useState<User[]>([]);
+  const [branches, setBranches] = useState<BranchApiDto[]>([]);
+  const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Role | 'all'>('all');
   const [search, setSearch] = useState('');
   const [createModal, setCreateModal] = useState<boolean>(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
 
-  const filteredUsers = db.users.filter((u) => {
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [apiUsers, apiBranches] = await Promise.all([
+        userService.getAllUsers(),
+        branchesApi.getAll().catch(() => [] as BranchApiDto[]),
+      ]);
+      setBranches(apiBranches);
+      setUsers(apiUsers.map((au) => mapApiUserToAppUser(au)));
+    } catch (err) {
+      toast((err as Error).message || 'Không thể tải danh sách người dùng từ máy chủ', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const filteredUsers = users.filter((u) => {
     if (tab !== 'all' && u.role !== tab) return false;
     if (!search) return true;
     const term = search.toLowerCase();
@@ -28,26 +52,19 @@ export function AdminUsersScreen() {
     );
   });
 
-  const toggleLock = (targetUser: User) => {
+  const toggleLock = async (targetUser: User) => {
     if (targetUser.id === currentUser?.id) {
-      alert('Không thể tự khóa tài khoản của chính mình!');
+      toast('Không thể tự khóa tài khoản của chính mình!', 'error');
       return;
     }
-    act((d) => {
-      const u = d.users.find((x) => x.id === targetUser.id);
-      if (u) {
-        u.locked = !u.locked;
-        L.notify(
-          d,
-          u.id,
-          u.locked ? 'Tài khoản đã bị khóa' : 'Tài khoản đã được mở khóa',
-          u.locked
-            ? 'Quản trị viên đã tạm khóa tài khoản của bạn.'
-            : 'Tài khoản của bạn đã có thể hoạt động trở lại.',
-          u.locked ? 'danger' : 'success'
-        );
-      }
-    }, targetUser.locked ? 'Đã mở khóa tài khoản' : 'Đã khóa tài khoản');
+    try {
+      const nextLocked = !targetUser.locked;
+      await userService.updateUserStatus(targetUser.id, { locked: nextLocked });
+      setUsers((prev) => prev.map((u) => (u.id === targetUser.id ? { ...u, locked: nextLocked } : u)));
+      toast(nextLocked ? 'Đã khóa tài khoản' : 'Đã mở khóa tài khoản', 'success');
+    } catch (err) {
+      toast((err as Error).message || 'Không thể cập nhật trạng thái tài khoản', 'error');
+    }
   };
 
   return (
@@ -56,9 +73,14 @@ export function AdminUsersScreen() {
         title="Quản lý Tài khoản & Phân quyền"
         desc="Quản trị người dùng toàn hệ thống, tạo tài khoản nhân viên/HLV và phân quyền chi nhánh."
         actions={
-          <button className="btn primary" onClick={() => setCreateModal(true)} id="btn-add-staff">
-            <UserPlus size={16} /> Thêm nhân viên / HLV
-          </button>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn ghost sm" onClick={loadData} disabled={loading}>
+              <RefreshCw size={14} className={loading ? 'spin' : ''} /> Làm mới
+            </button>
+            <button className="btn primary" onClick={() => setCreateModal(true)} id="btn-add-staff">
+              <UserPlus size={16} /> Thêm nhân viên / HLV
+            </button>
+          </div>
         }
       />
 
@@ -67,11 +89,11 @@ export function AdminUsersScreen() {
           value={tab}
           onChange={setTab}
           tabs={[
-            { id: 'all', label: 'Tất cả', count: db.users.length },
-            { id: 'member', label: 'Hội viên', count: db.users.filter((u) => u.role === 'member').length },
-            { id: 'trainer', label: 'Huấn luyện viên', count: db.users.filter((u) => u.role === 'trainer').length },
-            { id: 'receptionist', label: 'Lễ tân', count: db.users.filter((u) => u.role === 'receptionist').length },
-            { id: 'admin', label: 'Quản trị viên', count: db.users.filter((u) => u.role === 'admin').length },
+            { id: 'all', label: 'Tất cả', count: users.length },
+            { id: 'member', label: 'Hội viên', count: users.filter((u) => u.role === 'member').length },
+            { id: 'trainer', label: 'Huấn luyện viên', count: users.filter((u) => u.role === 'trainer').length },
+            { id: 'receptionist', label: 'Lễ tân', count: users.filter((u) => u.role === 'receptionist').length },
+            { id: 'admin', label: 'Quản trị viên', count: users.filter((u) => u.role === 'admin').length },
           ]}
         />
         <div className="input-icon" style={{ minWidth: 260 }}>
@@ -101,7 +123,8 @@ export function AdminUsersScreen() {
           <tbody>
             {filteredUsers.map((u) => {
               const [roleText, roleColor] = roleLabel[u.role];
-              const branch = u.branchId ? L.branchById(db, u.branchId) : null;
+              const branch = u.branchId ? branches.find((b) => b.id === u.branchId) : null;
+              const branchLabel = u.branchName || branch?.name;
               return (
                 <tr key={u.id}>
                   <td>
@@ -120,9 +143,9 @@ export function AdminUsersScreen() {
                     {u.role === 'member' ? (
                       <span style={{ fontFamily: 'monospace' }}>{u.cardCode || '—'}</span>
                     ) : u.role === 'receptionist' ? (
-                      branch ? branch.name : 'Chưa gán'
+                      branchLabel || 'Chưa gán'
                     ) : u.role === 'trainer' ? (
-                      u.trainer?.branchIds?.map((b) => L.branchById(db, b)?.name.replace('OOAD ', '')).join(', ') || 'Chưa gán'
+                      branchLabel ? branchLabel.replace('DFGymCenter ', '') : 'Chưa gán'
                     ) : (
                       'Toàn hệ thống'
                     )}
@@ -162,44 +185,75 @@ export function AdminUsersScreen() {
             })}
           </tbody>
         </table>
-        {filteredUsers.length === 0 && <Empty text="Không tìm thấy người dùng phù hợp" />}
+        {!loading && filteredUsers.length === 0 && <Empty text="Không tìm thấy người dùng phù hợp" />}
       </div>
 
-      {createModal && <CreateStaffModal onClose={() => setCreateModal(false)} />}
-      {editingUser && <EditUserModal user={editingUser} onClose={() => setEditingUser(null)} />}
+      {createModal && (
+        <CreateStaffModal
+          branches={branches}
+          onCreated={loadData}
+          onClose={() => setCreateModal(false)}
+        />
+      )}
+      {editingUser && (
+        <EditUserModal
+          user={editingUser}
+          branches={branches}
+          onUpdated={loadData}
+          onClose={() => setEditingUser(null)}
+        />
+      )}
     </>
   );
 }
 
-function CreateStaffModal({ onClose }: { onClose: () => void }) {
-  const { db, act } = useApp();
+function CreateStaffModal({
+  branches,
+  onCreated,
+  onClose,
+}: {
+  branches: BranchApiDto[];
+  onCreated: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const { toast } = useApp();
   const [role, setRole] = useState<'receptionist' | 'trainer' | 'admin'>('receptionist');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [branchId, setBranchId] = useState(db.branches[0]?.id || '');
+  const [branchId, setBranchId] = useState(branches[0]?.id || '');
   const [specialties, setSpecialties] = useState('Gym, HIIT, Cardio');
   const [experienceYears, setExperienceYears] = useState(3);
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = () => {
-    act((d) => {
-      if (!fullName.trim() || !email.trim()) throw new Error('Vui lòng điền đủ họ tên và email');
-      L.createStaff(d, {
-        role,
+  useEffect(() => {
+    if (!branchId && branches.length > 0) setBranchId(branches[0].id);
+  }, [branches, branchId]);
+
+  const handleSave = async () => {
+    if (!fullName.trim() || !email.trim()) {
+      toast('Vui lòng điền đủ họ tên và email', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      await userService.createStaff({
         fullName: fullName.trim(),
         email: email.trim(),
         phone: phone.trim(),
-        branchId: role === 'receptionist' ? branchId : undefined,
-        trainer: role === 'trainer' ? {
-          specialties: specialties.split(',').map((s) => s.trim()).filter(Boolean),
-          experienceYears,
-          certifications: ['Chứng chỉ thể hình Quốc gia'],
-          bio: 'Huấn luyện viên chuyên môn cao tại OOAD',
-          branchIds: [branchId],
-        } : undefined,
+        role: role === 'receptionist' ? 'STAFF' : role === 'trainer' ? 'TRAINER' : 'ADMIN',
+        branchId: role !== 'admin' ? branchId : undefined,
+        specialty: role === 'trainer' ? specialties : undefined,
+        experienceYears: role === 'trainer' ? experienceYears : undefined,
       });
-    }, 'Tạo tài khoản thành công! Mật khẩu mặc định là 123456');
-    onClose();
+      toast('Tạo tài khoản thành công! Mật khẩu mặc định là 123456', 'success');
+      await onCreated();
+      onClose();
+    } catch (err) {
+      toast((err as Error).message || 'Không thể tạo tài khoản', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -209,7 +263,9 @@ function CreateStaffModal({ onClose }: { onClose: () => void }) {
       footer={
         <>
           <button className="btn" onClick={onClose}>Hủy</button>
-          <button className="btn primary" onClick={handleSave} id="save-staff">Tạo tài khoản</button>
+          <button className="btn primary" onClick={handleSave} disabled={saving} id="save-staff">
+            {saving ? 'Đang tạo...' : 'Tạo tài khoản'}
+          </button>
         </>
       }
     >
@@ -246,7 +302,7 @@ function CreateStaffModal({ onClose }: { onClose: () => void }) {
           <div className="field">
             <label>{role === 'receptionist' ? 'Chi nhánh làm việc *' : 'Chi nhánh chính *'}</label>
             <select className="input" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
-              {db.branches.map((b) => (
+              {branches.map((b) => (
                 <option key={b.id} value={b.id}>{b.name}</option>
               ))}
             </select>
@@ -271,22 +327,39 @@ function CreateStaffModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function EditUserModal({ user, onClose }: { user: User; onClose: () => void }) {
-  const { db, act } = useApp();
+function EditUserModal({
+  user,
+  branches,
+  onUpdated,
+  onClose,
+}: {
+  user: User;
+  branches: BranchApiDto[];
+  onUpdated: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const { toast } = useApp();
   const [fullName, setFullName] = useState(user.fullName);
   const [phone, setPhone] = useState(user.phone);
-  const [branchId, setBranchId] = useState(user.branchId || db.branches[0]?.id || '');
+  const [branchId, setBranchId] = useState(user.branchId || branches[0]?.id || '');
+  const [saving, setSaving] = useState(false);
 
-  const handleUpdate = () => {
-    act((d) => {
-      const u = d.users.find((x) => x.id === user.id);
-      if (u) {
-        u.fullName = fullName.trim();
-        u.phone = phone.trim();
-        if (u.role === 'receptionist') u.branchId = branchId;
-      }
-    }, 'Cập nhật thông tin người dùng thành công');
-    onClose();
+  const handleUpdate = async () => {
+    setSaving(true);
+    try {
+      await userService.updateUserByAdmin(user.id, {
+        fullName: fullName.trim(),
+        phone: phone.trim(),
+        branchId: user.role === 'receptionist' || user.role === 'trainer' ? branchId : undefined,
+      });
+      toast('Cập nhật thông tin người dùng thành công', 'success');
+      await onUpdated();
+      onClose();
+    } catch (err) {
+      toast((err as Error).message || 'Cập nhật thất bại', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -296,7 +369,9 @@ function EditUserModal({ user, onClose }: { user: User; onClose: () => void }) {
       footer={
         <>
           <button className="btn" onClick={onClose}>Hủy</button>
-          <button className="btn primary" onClick={handleUpdate} id="save-edit-user">Lưu thay đổi</button>
+          <button className="btn primary" onClick={handleUpdate} disabled={saving} id="save-edit-user">
+            {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
+          </button>
         </>
       }
     >
@@ -313,11 +388,11 @@ function EditUserModal({ user, onClose }: { user: User; onClose: () => void }) {
           <label>Số điện thoại</label>
           <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
         </div>
-        {user.role === 'receptionist' && (
+        {(user.role === 'receptionist' || user.role === 'trainer') && (
           <div className="field">
             <label>Chi nhánh làm việc</label>
             <select className="input" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
-              {db.branches.map((b) => (
+              {branches.map((b) => (
                 <option key={b.id} value={b.id}>{b.name}</option>
               ))}
             </select>

@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { ShieldAlert, AlertTriangle } from 'lucide-react';
 import { Modal } from '../ui';
 import { useApp } from '../../store/AppContext';
-import * as L from '../../store/logic';
 import { memberCardService } from '../../api/memberCard.service';
 import type { CardStatus } from '../../types';
 
@@ -10,7 +9,7 @@ export interface ReportLostCardButtonProps {
   cardId: string;
   cardCode: string;
   status: CardStatus;
-  onReported?: () => void;
+  onReported?: () => void | Promise<void>;
 }
 
 export function ReportLostCardButton({
@@ -19,7 +18,7 @@ export function ReportLostCardButton({
   status,
   onReported,
 }: ReportLostCardButtonProps) {
-  const { user, act } = useApp();
+  const { user, toast } = useApp();
   const [openConfirm, setOpenConfirm] = useState(false);
   const [reason, setReason] = useState('Làm rơi / thất lạc thẻ hội viên');
   const [loading, setLoading] = useState(false);
@@ -31,28 +30,15 @@ export function ReportLostCardButton({
   const handleConfirmLost = async () => {
     setLoading(true);
     try {
-      // Đồng bộ gọi API Backend PATCH /api/member-cards/{id}/status nếu có kết nối
-      try {
-        await memberCardService.updateCardStatus(cardId, {
-          status: 'LOST',
-          reason: reason.trim() || 'Hội viên báo mất thẻ',
-        });
-      } catch {
-        // Fallback sang store cục bộ khi chạy ở chế độ Demo
-      }
-
-      act((d) => {
-        L.updateMemberCardStatus(d, {
-          cardId,
-          status: 'LOST',
-          actorId: user.id,
-          isStaff: false,
-          reason: reason.trim() || 'Hội viên tự báo mất thẻ',
-        });
-      }, `Đã báo mất và khóa vĩnh viễn thẻ ${cardCode}`);
-
+      await memberCardService.updateCardStatus(cardId, {
+        status: 'LOST',
+        reason: reason.trim() || 'Hội viên báo mất thẻ',
+      });
+      toast(`Đã báo mất và khóa vĩnh viễn thẻ ${cardCode}`, 'success');
       setOpenConfirm(false);
-      onReported?.();
+      await onReported?.();
+    } catch (err) {
+      toast((err as Error).message, 'error');
     } finally {
       setLoading(false);
     }

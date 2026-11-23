@@ -27,6 +27,7 @@ import {
   weekStart,
   fmtDateTime,
   fmtDate,
+  fmtTime,
   toDateStr,
   parseDate,
 } from '../utils';
@@ -696,8 +697,54 @@ export function handleFreeze(db: DB, reqId: string, staffId: string, approve: bo
 /* ------------------------------------------------------------------ */
 /*  Classes & sessions                                                 */
 /* ------------------------------------------------------------------ */
+export function normalizeSessions(db: DB): void {
+  const bookedIds = new Set(db.classBookings.map((b) => b.sessionId));
+  const bySlot = new Map<string, ClassSession>();
+
+  // 1. Gộp các buổi học trùng hệt nhau (classId + date + startAt), ưu tiên giữ bản ghi đã có booking
+  for (const s of db.sessions) {
+    const slotKey = `${s.classId}|${s.date}|${s.startAt}`;
+    const existing = bySlot.get(slotKey);
+    if (!existing || (!bookedIds.has(existing.id) && bookedIds.has(s.id))) {
+      bySlot.set(slotKey, s);
+    }
+  }
+
+  // 2. Đảm bảo mỗi buổi học còn lại đều có id duy nhất
+  const usedIds = new Set<string>();
+  const normalized: ClassSession[] = [];
+  for (const s of bySlot.values()) {
+    if (!usedIds.has(s.id)) {
+      usedIds.add(s.id);
+      normalized.push(s);
+      continue;
+    }
+
+    const oldId = s.id;
+    let nextId = uid('ses');
+    while (usedIds.has(nextId)) {
+      nextId = uid('ses');
+    }
+    usedIds.add(nextId);
+    s.id = nextId;
+    normalized.push(s);
+
+    // Chỉ remap booking nếu có đúng 1 buổi không trùng nghĩa trỏ về oldId và buổi đầu tiên không dùng booking đó
+    const matchingBookings = db.classBookings.filter((b) => b.sessionId === oldId);
+    const firstWithOldId = normalized.find((x) => x !== s && x.id === oldId);
+    if (matchingBookings.length > 0 && !firstWithOldId) {
+      matchingBookings.forEach((b) => {
+        b.sessionId = nextId;
+      });
+    }
+  }
+
+  db.sessions = normalized;
+}
+
 export function ensureSessions(db: DB, fromOffset = 0, toOffset = 14) {
   const today = todayStr();
+  const usedIds = new Set(db.sessions.map((s) => s.id));
   for (const c of db.classes) {
     if (!c.active) continue;
     for (let i = fromOffset; i <= toOffset; i++) {
@@ -705,8 +752,13 @@ export function ensureSessions(db: DB, fromOffset = 0, toOffset = 14) {
       if (!c.daysOfWeek.includes(parseDate(date).getDay())) continue;
       if (db.sessions.some((s) => s.classId === c.id && s.date === date)) continue;
       const startAt = atTime(date, c.startTime);
+      let sessionId = `ses_${c.id}_${date}`;
+      while (usedIds.has(sessionId)) {
+        sessionId = uid('ses');
+      }
+      usedIds.add(sessionId);
       db.sessions.push({
-        id: `ses_${c.id}_${date}`,
+        id: sessionId,
         classId: c.id,
         date,
         startAt,
@@ -849,15 +901,59 @@ function generateFutureSessions(db: DB, c: GroupClass) {
   ensureSessions(db);
 }
 
-export function saveClass(db: DB, data: GroupClass) {
-  const idx = db.classes.findIndex((c) => c.id === data.id);
-  const prev = idx >= 0 ? db.classes[idx] : undefined;
-  if (idx >= 0) db.classes[idx] = data;
-  else db.classes.push(data);
-  generateFutureSessions(db, data);
-  if (!prev || prev.trainerId !== data.trainerId) {
-    notify(db, data.trainerId, 'Bạn được phân công lớp mới', `Lớp ${data.name} – ${branchById(db, data.branchId)?.name}, ${data.startTime} (${data.durationMin} phút).`, 'info', '/trainer/classes');
+function isoRangesOverlap(startA: string, endA: string, startB: string, endB: string): boolean {
+  return new Date(startA).getTime() < new Date(endB).getTime() && new Date(startB).getTime() < new Date(endA).getTime();
+}
+
+function clockToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function clockRangesOverlap(startA: string, durA: number, startB: string, durB: number): boolean {
+  const sA = clockToMinutes(startA);
+  const eA = sA + durA;
+  const sB = clockToMinutes(startB);
+  const eB = sB + durB;
+  return sA < eB && sB < eA;
+}
+
+export function saveClass(db: DB, data: GroupClass): boolean {
+  const cleanName = data.name.trim();
+  const cleanRoom = data.room.trim();
+  if (!cleanName) fail('Tên lớp học không được để trống');
+  if (!cleanRoom) fail('Phòng tập không được để trống');
+  if (data.daysOfWeek.length === 0) fail('Vui lòng chọn ít nhất một ngày trong tuần');
+  if (data.capacity <= 0) fail('Sĩ số tối đa phải lớn hơn 0');
+  if (data.durationMin < 15) fail('Thời lượng lớp học tối thiểu 15 phút');
+
+  for (const other of db.classes) {
+    if (other.id === data.id || !other.active) continue;
+    const sharesDay = other.daysOfWeek.some((day) => data.daysOfWeek.includes(day));
+    if (!sharesDay || !clockRangesOverlap(data.startTime, data.durationMin, other.startTime, other.durationMin)) {
+      continue;
+    }
+
+    if (other.branchId === data.branchId && other.room.trim().toLowerCase() === cleanRoom.toLowerCase()) {
+      fail(`Phòng '${cleanRoom}' bị trùng lịch với lớp '${other.name}' (${other.startTime}).`);
+    }
+
+    if (other.trainerId === data.trainerId) {
+      const trName = userById(db, data.trainerId)?.fullName ?? 'HLV';
+      fail(`Huấn luyện viên ${trName} đã có lớp '${other.name}' (${other.startTime}) trùng khung giờ.`);
+    }
   }
+
+  const normalized: GroupClass = { ...data, name: cleanName, room: cleanRoom };
+  const idx = db.classes.findIndex((c) => c.id === normalized.id);
+  const prev = idx >= 0 ? db.classes[idx] : undefined;
+  if (idx >= 0) db.classes[idx] = normalized;
+  else db.classes.push(normalized);
+  generateFutureSessions(db, normalized);
+  if (!prev || prev.trainerId !== normalized.trainerId) {
+    notify(db, normalized.trainerId, 'Bạn được phân công lớp mới', `Lớp ${normalized.name} – ${branchById(db, normalized.branchId)?.name}, ${normalized.startTime} (${normalized.durationMin} phút).`, 'info', '/trainer/classes');
+  }
+  return true;
 }
 
 export function deleteClass(db: DB, classId: string) {
@@ -883,22 +979,65 @@ export function cancelSession(db: DB, sessionId: string, reason: string) {
   notify(db, s.trainerId, 'Buổi dạy bị hủy', `Buổi ${c.name} lúc ${fmtDateTime(s.startAt)} đã bị hủy. ${reason}`, 'warning', '/trainer/classes');
 }
 
-export function rescheduleSession(db: DB, sessionId: string, date: string, time: string, room: string, trainerId: string) {
+export function rescheduleSession(db: DB, sessionId: string, date: string, time: string, room: string, trainerId: string): boolean {
   const s = sessionById(db, sessionId) ?? fail('Không tìm thấy buổi học');
+  if (s.status !== 'scheduled') fail('Không thể đổi lịch buổi học đã hủy hoặc đã hoàn thành');
   const c = classById(db, s.classId)!;
+  const cleanRoom = room.trim();
+  if (!cleanRoom) fail('Vui lòng nhập hoặc chọn phòng tập');
+  if (!trainerId) fail('Vui lòng chọn huấn luyện viên phụ trách');
+
+  const newStart = atTime(date, time);
+  if (Number.isNaN(new Date(newStart).getTime()) || new Date(newStart).getTime() <= Date.now()) {
+    fail('Thời gian học mới phải nằm ở tương lai');
+  }
+  const newEnd = new Date(new Date(newStart).getTime() + c.durationMin * 60000).toISOString();
+
+  for (const x of db.sessions) {
+    if (x.id === s.id || x.status === 'cancelled') continue;
+    if (!isoRangesOverlap(newStart, newEnd, x.startAt, x.endAt)) continue;
+
+    if (x.classId === s.classId) {
+      fail(`Lớp '${c.name}' đã có buổi học khác trùng khung giờ này.`);
+    }
+
+    const otherClass = classById(db, x.classId);
+    if (otherClass?.branchId === c.branchId && x.room.trim().toLowerCase() === cleanRoom.toLowerCase()) {
+      fail(`Phòng '${cleanRoom}' tại ${branchById(db, c.branchId)?.name ?? 'chi nhánh'} đã có lớp '${otherClass.name}' (${fmtTime(x.startAt)}–${fmtTime(x.endAt)}) trùng khung giờ.`);
+    }
+
+    if (x.trainerId === trainerId) {
+      const trName = userById(db, trainerId)?.fullName ?? 'HLV';
+      const otherBranchName = otherClass ? branchById(db, otherClass.branchId)?.name ?? '' : '';
+      fail(`Huấn luyện viên ${trName} đã có lịch dạy lớp '${otherClass?.name ?? ''}'${otherBranchName ? ` tại ${otherBranchName}` : ''} (${fmtTime(x.startAt)}–${fmtTime(x.endAt)}) trùng khung giờ.`);
+    }
+  }
+
+  const ptConflict = db.ptBookings.find(
+    (b) =>
+      b.trainerId === trainerId &&
+      ['pending', 'confirmed'].includes(b.status) &&
+      isoRangesOverlap(newStart, newEnd, b.startAt, b.endAt),
+  );
+  if (ptConflict) {
+    const trName = userById(db, trainerId)?.fullName ?? 'HLV';
+    fail(`Huấn luyện viên ${trName} đã có lịch hẹn PT 1-kèm-1 (${fmtTime(ptConflict.startAt)}–${fmtTime(ptConflict.endAt)}) trùng khung giờ.`);
+  }
+
   const old = s.startAt;
   const oldTrainer = s.trainerId;
   s.date = date;
-  s.startAt = atTime(date, time);
-  s.endAt = new Date(new Date(s.startAt).getTime() + c.durationMin * 60000).toISOString();
-  s.room = room;
+  s.startAt = newStart;
+  s.endAt = newEnd;
+  s.room = cleanRoom;
   s.trainerId = trainerId;
-  const msg = `Lớp ${c.name} đổi từ ${fmtDateTime(old)} sang ${fmtDateTime(s.startAt)} (${room}).`;
+  const msg = `Lớp ${c.name} đổi từ ${fmtDateTime(old)} sang ${fmtDateTime(s.startAt)} (${cleanRoom}).`;
   db.classBookings
     .filter((b) => b.sessionId === s.id && ['booked', 'waitlist'].includes(b.status))
     .forEach((b) => notify(db, b.memberId, 'Buổi học được đổi lịch', msg, 'warning', '/member/bookings'));
   notify(db, trainerId, 'Buổi dạy được đổi lịch', msg, 'warning', '/trainer/classes');
   if (oldTrainer !== trainerId) notify(db, oldTrainer, 'Buổi dạy được chuyển cho HLV khác', `Buổi ${c.name} ${fmtDateTime(old)} đã được chuyển sang HLV khác.`, 'info');
+  return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1075,256 +1214,6 @@ export function addSlot(db: DB, trainerId: string, branchId: string, date: strin
   db.trainerSlots.push({ id: uid('slot'), trainerId, branchId, startAt, endAt });
 }
 
-/* ------------------------------------------------------------------ */
-/*  AI Nutrition Advisory Calculation                                  */
-/* ------------------------------------------------------------------ */
-export interface NutritionPlanResult {
-  bmr: number;
-  tdee: number;
-  targetCalories: number;
-  deficitOrSurplus: number;
-  macros: { protein: number; carbs: number; fat: number };
-  waterLiters: number;
-  goalLabel: string;
-  meals: {
-    name: string;
-    time: string;
-    calories: number;
-    description: string;
-    items: string[];
-  }[];
-  tips: string[];
-}
-
-export function calculateNutritionPlan(opts: {
-  gender: 'male' | 'female' | 'other';
-  age: number;
-  weight: number;
-  height: number;
-  bodyFat?: number;
-  goal: 'lose_fat' | 'build_muscle' | 'maintain' | 'endurance';
-  activityLevel: 'sedentary' | 'light' | 'moderate' | 'high';
-  dietStyle: 'eat_clean' | 'high_protein' | 'vegetarian' | 'low_carb';
-}): NutritionPlanResult {
-  const { gender, age, weight, height, goal, activityLevel, dietStyle } = opts;
-
-  // BMR (Mifflin-St Jeor formula)
-  let bmr = 10 * weight + 6.25 * height - 5 * age;
-  bmr = gender === 'female' ? bmr - 161 : bmr + 5;
-  bmr = Math.round(bmr);
-
-  // Activity multipliers
-  const actMultipliers = {
-    sedentary: 1.2,
-    light: 1.375,
-    moderate: 1.55,
-    high: 1.725,
-  };
-  const tdee = Math.round(bmr * (actMultipliers[activityLevel] || 1.4));
-
-  // Goal calorie adjustment
-  let targetCalories = tdee;
-  let deficitOrSurplus = 0;
-  let goalLabel = 'Duy trì cân nặng & Tăng cường thể lực';
-
-  if (goal === 'lose_fat') {
-    deficitOrSurplus = -500;
-    targetCalories = Math.max(1200, tdee - 500);
-    goalLabel = 'Giảm mỡ & Siết cơ (Fat Loss & Cut)';
-  } else if (goal === 'build_muscle') {
-    deficitOrSurplus = 350;
-    targetCalories = tdee + 350;
-    goalLabel = 'Tăng cơ nạc (Lean Bulking)';
-  } else if (goal === 'endurance') {
-    deficitOrSurplus = 150;
-    targetCalories = tdee + 150;
-    goalLabel = 'Tăng sức bền & Thể lực tim mạch';
-  }
-
-  // Protein grams
-  const proteinMultiplier = goal === 'build_muscle' ? 2.2 : goal === 'lose_fat' ? 2.0 : 1.8;
-  const protein = Math.round(weight * proteinMultiplier);
-  const proteinCals = protein * 4;
-
-  // Fat (25-30% of target calories)
-  const fatCals = Math.round(targetCalories * (dietStyle === 'low_carb' ? 0.35 : 0.25));
-  const fat = Math.round(fatCals / 9);
-
-  // Remaining cals from carbs
-  const carbCals = Math.max(0, targetCalories - proteinCals - fatCals);
-  const carbs = Math.round(carbCals / 4);
-
-  // Water: 40ml per kg weight + 0.5L for training
-  const waterLiters = +(weight * 0.04 + 0.5).toFixed(1);
-
-  // Diet-specific meal blueprints
-  const mealsByStyle: Record<string, NutritionPlanResult['meals']> = {
-    eat_clean: [
-      {
-        name: 'Bữa sáng khởi động',
-        time: '07:00 - 07:30',
-        calories: Math.round(targetCalories * 0.25),
-        description: 'Cung cấp năng lượng sạch, đường hấp thu chậm và đạm nạc',
-        items: ['Yến mạch nấu sữa hạnh nhân / sữa chua Hy Lạp', '3 lòng trắng trứng + 1 quả trứng ốp la', '1/2 quả chuối + hạt chia'],
-      },
-      {
-        name: 'Bữa phụ trước tập (Pre-workout)',
-        time: '10:00 hoặc trước tập 45p',
-        calories: Math.round(targetCalories * 0.1),
-        description: 'Tăng glycogen cơ bắp, hỗ trợ tỉnh táo và chống mỏi cơ',
-        items: ['1 lát bánh mì đen nguyên cám quết bơ đậu phộng', '1 quả táo xanh / chuối', '1 ly cà phê đen không đường / BCAA'],
-      },
-      {
-        name: 'Bữa trưa phục hồi',
-        time: '12:00 - 12:45',
-        calories: Math.round(targetCalories * 0.35),
-        description: 'Bữa chính cân bằng đầy đủ đạm, tinh bột phức và chất xơ',
-        items: ['150g ức gà áp chảo hoặc cá hồi nướng', '1 chén cơm gạo lứt / khoai lang luộc', 'Rau củ luộc (bông cải xanh, măng tây, cà rốt)'],
-      },
-      {
-        name: 'Bữa phụ chiều (Post-workout)',
-        time: '16:00 - 16:30',
-        calories: Math.round(targetCalories * 0.1),
-        description: 'Nạp protein hấp thu nhanh giúp phục hồi sợi cơ bị tổn thương',
-        items: ['1 muỗng Whey Protein Isolate pha nước mát', '1 nắm hạt hạnh nhân hoặc óc chó (25g)'],
-      },
-      {
-        name: 'Bữa tối nhẹ bụng & Tái tạo',
-        time: '19:00 - 19:30',
-        calories: Math.round(targetCalories * 0.2),
-        description: 'Giảm tinh bột, tăng chất xơ và đạm nạc giúp giấc ngủ sâu',
-        items: ['150g tôm hấp hoặc thăn bò nướng', 'Đĩa xà lách trộn dầu olive và giấm táo', 'Canh rau củ thanh đạm'],
-      },
-    ],
-    high_protein: [
-      {
-        name: 'Bữa sáng giàu đạm',
-        time: '07:00',
-        calories: Math.round(targetCalories * 0.25),
-        description: 'Kích hoạt đồng hóa protein ngay sau khi thức dậy',
-        items: ['Trứng cuộn 4 trứng (2 nguyên, 2 lòng trắng)', '2 lát bánh mì ngũ cốc nguyên hạt', 'Ly sữa tươi tiệt trùng không đường'],
-      },
-      {
-        name: 'Bữa phụ sáng',
-        time: '10:00',
-        calories: Math.round(targetCalories * 0.1),
-        description: 'Duy trì nồng độ Amino Acid trong máu',
-        items: ['1 hũ sữa chua Hy Lạp nguyên chất (15g protein)', 'Hạt điều rang sấy tự nhiên'],
-      },
-      {
-        name: 'Bữa trưa tăng cơ',
-        time: '12:30',
-        calories: Math.round(targetCalories * 0.35),
-        description: 'Tối ưu hóa tổng hợp cơ bắp với thịt đỏ và carb sạch',
-        items: ['180g bò bít tết hoặc phi lê gà', '1 củ khoai tây nướng hoặc 1 chén cơm lứt', 'Xà lách xốt mè rang'],
-      },
-      {
-        name: 'Bữa phục hồi sau tập',
-        time: '16:30',
-        calories: Math.round(targetCalories * 0.1),
-        description: 'Bổ sung ngay sau buổi tập kháng lực',
-        items: ['1 muỗng Whey Protein + 1 quả chuối sứ chín'],
-      },
-      {
-        name: 'Bữa tối tái tạo',
-        time: '19:30',
-        calories: Math.round(targetCalories * 0.2),
-        description: 'Đạm hấp thu chậm giúp nuôi cơ suốt đêm',
-        items: ['160g cá ngừ / cá chẽm áp chảo', 'Bông cải xanh xào tỏi dầu oliu', 'Súp nấm thanh đạm'],
-      },
-    ],
-    vegetarian: [
-      {
-        name: 'Bữa sáng thực vật',
-        time: '07:00',
-        calories: Math.round(targetCalories * 0.25),
-        description: 'Nguồn đạm từ hạt, đậu và yến mạch hữu cơ',
-        items: ['Sinh tố yến mạch, bột protein thực vật, sữa hạt điều', 'Bánh mì đen kẹp bơ quả và dưa leo'],
-      },
-      {
-        name: 'Bữa phụ trước tập',
-        time: '10:00',
-        calories: Math.round(targetCalories * 0.1),
-        description: 'Tăng cường năng lượng tự nhiên',
-        items: ['1 quả chuối + 2 muỗng bơ đậu phộng nguyên chất', 'Hạt chia ngâm nước dừa'],
-      },
-      {
-        name: 'Bữa trưa chay năng động',
-        time: '12:30',
-        calories: Math.round(targetCalories * 0.35),
-        description: 'Kết hợp các loại đậu và ngũ cốc để đủ axit amin thiết yếu',
-        items: ['Đậu hũ áp chảo sốt cà chua nấm đông cô', '1 chén cơm gạo lứt trộn đậu gà và đậu lăng', 'Canh rong biển đậu hũ non'],
-      },
-      {
-        name: 'Bữa phụ phục hồi',
-        time: '16:30',
-        calories: Math.round(targetCalories * 0.1),
-        description: 'Nạp protein thực vật tinh khiết',
-        items: ['1 ly sữa đậu nành tươi không đường', 'Hạt óc chó và hạnh nhân (30g)'],
-      },
-      {
-        name: 'Bữa tối thuần khiết',
-        time: '19:30',
-        calories: Math.round(targetCalories * 0.2),
-        description: 'Nhẹ bụng, giàu chất chống oxy hóa',
-        items: ['Tempeh / Đậu nành lên men áp chảo', 'Salad rau củ sốt chanh dây', 'Bí đỏ hấp hạt sen'],
-      },
-    ],
-    low_carb: [
-      {
-        name: 'Bữa sáng Keto/Low-Carb',
-        time: '07:00',
-        calories: Math.round(targetCalories * 0.3),
-        description: 'Chất béo lành mạnh và protein cao, carb dưới 5g',
-        items: ['3 quả trứng bác bơ tỏi', '3 lát thịt xông khói áp chảo giòn', '1/2 quả bơ sáp cắt lát'],
-      },
-      {
-        name: 'Bữa trưa năng lượng bền bỉ',
-        time: '12:30',
-        calories: Math.round(targetCalories * 0.35),
-        description: 'Chuyển hóa mỡ thành năng lượng hoạt động',
-        items: ['200g cá hồi áp chảo sốt kem bơ chanh', 'Măng tây và bông cải trắng xào dầu olive', 'Salad rau bina với hạt hướng dương'],
-      },
-      {
-        name: 'Bữa phụ chiều',
-        time: '16:30',
-        calories: Math.round(targetCalories * 0.1),
-        description: 'Chống đói và duy trì trạng thái Ketosis',
-        items: ['Phô mai sợi / Phô mai miếng Cheddar', 'Hạt mắc ca hoặc hạnh nhân (30g)'],
-      },
-      {
-        name: 'Bữa tối giàu đạm sạch',
-        time: '19:30',
-        calories: Math.round(targetCalories * 0.25),
-        description: 'Protein nạc và rau lá xanh đậm',
-        items: ['180g đùi gà nướng thảo mộc', 'Salad bắp cải tím trộn giấm dầu oliu', 'Canh nấm thịt băm'],
-      },
-    ],
-  };
-
-  const meals = mealsByStyle[dietStyle] || mealsByStyle.eat_clean;
-
-  const tips = [
-    `💧 Uống đủ ${waterLiters} lít nước mỗi ngày; uống 250ml nước trước buổi tập 30 phút.`,
-    '⏰ Bữa ăn trước tập nên cách giờ tập 60 - 90 phút để hệ tiêu hóa làm việc ổn định, tránh trào ngược.',
-    '🥩 Đảm bảo nạp đủ lượng Protein mục tiêu hàng ngày để cơ bắp phục hồi và phát triển tối đa.',
-    '😴 Ngủ đủ 7 - 8 tiếng mỗi đêm; 80% quá trình đốt mỡ và xây dựng mô cơ diễn ra khi cơ thể trong giấc ngủ sâu.',
-    '🥗 Luôn ăn rau củ trước bữa ăn chính để bổ sung chất xơ và kiểm soát nồng độ đường huyết sau ăn.',
-  ];
-
-  return {
-    bmr,
-    tdee,
-    targetCalories,
-    deficitOrSurplus,
-    macros: { protein, carbs, fat },
-    waterLiters,
-    goalLabel,
-    meals,
-    tips,
-  };
-}
-
 export function removeSlot(db: DB, slotId: string) {
   if (slotTaken(db, slotId)) fail('Khung giờ đã có lịch hẹn, không thể xóa');
   db.trainerSlots = db.trainerSlots.filter((s) => s.id !== slotId);
@@ -1466,6 +1355,7 @@ export function runScheduler(db: DB) {
   const now = Date.now();
   const today = todayStr();
   const cfg = db.settings;
+  normalizeSessions(db);
   ensureSessions(db);
 
   for (const s of db.sessions) {

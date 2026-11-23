@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using OOAD.Domain.Entities;
 using OOAD.Domain.Interfaces;
 using OOAD.Infrastructure.Persistence.Context;
@@ -8,5 +9,21 @@ public class MembershipRepository : GenericRepository<Membership>, IMembershipRe
 {
     public MembershipRepository(AppDbContext context) : base(context)
     {
+    }
+
+    public async Task<IReadOnlyList<Membership>> GetByMemberIdWithPlanAndFreezeAsync(
+        Guid memberId,
+        CancellationToken cancellationToken = default
+    )
+    {
+        return await _context.Memberships
+            .AsNoTracking()
+            .Include(m => m.Branch)
+            .Include(m => m.Plan)
+                .ThenInclude(p => p.PlanBranches)
+            .Include(m => m.FreezeRequests)
+            .Where(m => m.MemberId == memberId)
+            .OrderByDescending(m => m.EndDate)
+            .ToListAsync(cancellationToken);
     }
 }

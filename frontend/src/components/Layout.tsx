@@ -1,24 +1,74 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, Outlet, useNavigate, Navigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, User as UserIcon, Activity, CreditCard, CalendarDays, Dumbbell, ClipboardList, QrCode, Receipt, Wrench, Bell,
-  LogOut, Menu, CalendarClock, Inbox, Star, ScanLine, Snowflake, History, Users, Building2, Package, BarChart3, Settings, RotateCcw,
-  CheckCircle2, AlertTriangle, Info, XCircle, KeyRound, Zap, Sun, Moon, BookOpen,
+  LogOut, Menu, CalendarClock, Inbox, Star, ScanLine, Snowflake, History, Users, Building2, Package, BarChart3,
+  CheckCircle2, AlertTriangle, Info, XCircle, KeyRound, Zap, Sun, Moon,
 } from 'lucide-react';
 import { useApp } from '../store/AppContext';
 import { Avatar, Badge } from './ui';
 import { roleLabel } from './labels';
 import { timeAgo } from '../utils';
+import { getAuthToken } from '../api/apiClient';
+import {
+  notificationsApi,
+  mapNotificationType,
+  resolveNotificationLink,
+  NOTIFICATIONS_CHANGED_EVENT,
+  type NotificationApiDto,
+} from '../api/notificationsApi';
+import { ptApi } from '../api/ptApi';
+import { membershipPlansApi } from '../api/membershipPlansApi';
+import { equipmentsApi } from '../api/equipmentsApi';
 import type { Role, Notification } from '../types';
 
 interface NavItem { to: string; label: string; icon: ReactNode; count?: number; end?: boolean }
 
 function useNav(role: Role): { section: string; items: NavItem[] }[] {
-  const { db, user } = useApp();
-  const unreadPT = db.ptBookings.filter((b) => b.trainerId === user?.id && b.status === 'pending').length;
-  const pendingFreeze = db.freezeRequests.filter((f) => f.status === 'pending').length;
-  const pendingEq = db.equipmentReports.filter((r) => r.status === 'pending' && (!user?.branchId || r.branchId === user.branchId)).length;
+  const { user } = useApp();
+  const [counts, setCounts] = useState({ pt: 0, freeze: 0, eq: 0 });
+
+  useEffect(() => {
+    if (!getAuthToken() || !user) return;
+    let cancelled = false;
+
+    const loadCounts = async () => {
+      try {
+        if (role === 'trainer') {
+          const reqs = await ptApi.getTrainerPtRequests();
+          if (!cancelled) {
+            setCounts((c) => ({ ...c, pt: reqs.filter((r) => r.status.toLowerCase() === 'pending').length }));
+          }
+        } else if (role === 'receptionist') {
+          const [freezes, reps] = await Promise.all([
+            membershipPlansApi.getAllFreezeRequests('Pending').catch(() => []),
+            equipmentsApi.getReports().catch(() => []),
+          ]);
+          if (!cancelled) {
+            setCounts({
+              pt: 0,
+              freeze: freezes.length,
+              eq: reps.filter((r) => r.status === 'pending' && (!user.branchId || r.branchId === user.branchId)).length,
+            });
+          }
+        } else if (role === 'admin') {
+          const reps = await equipmentsApi.getReports().catch(() => []);
+          if (!cancelled) {
+            setCounts((c) => ({ ...c, eq: reps.filter((r) => r.status === 'pending').length }));
+          }
+        }
+      } catch {
+        /* ignore nav badge fetch errors */
+      }
+    };
+
+    loadCounts();
+    return () => {
+      cancelled = true;
+    };
+  }, [role, user]);
+
   const s = 18;
   switch (role) {
     case 'member':
@@ -32,7 +82,6 @@ function useNav(role: Role): { section: string; items: NavItem[] }[] {
           { to: '/member/pt', label: 'Đặt lịch PT', icon: <Dumbbell size={s} /> },
           { to: '/member/bookings', label: 'Lịch của tôi', icon: <ClipboardList size={s} /> },
           { to: '/member/progress', label: 'Tiến độ & chỉ số', icon: <Activity size={s} /> },
-          { to: '/member/rules', label: 'Nội quy phòng gym', icon: <BookOpen size={s} /> },
         ] },
         { section: 'Tài khoản', items: [
           { to: '/member/memberships', label: 'Gói tập', icon: <CreditCard size={s} /> },
@@ -45,7 +94,7 @@ function useNav(role: Role): { section: string; items: NavItem[] }[] {
       return [
         { section: 'Tổng quan', items: [{ to: '/trainer', label: 'Trang chủ', icon: <LayoutDashboard size={s} />, end: true }] },
         { section: 'Công việc', items: [
-          { to: '/trainer/requests', label: 'Lịch hẹn 1-kèm-1', icon: <Inbox size={s} />, count: unreadPT },
+          { to: '/trainer/requests', label: 'Lịch hẹn 1-kèm-1', icon: <Inbox size={s} />, count: counts.pt },
           { to: '/trainer/availability', label: 'Lịch rảnh', icon: <CalendarClock size={s} /> },
           { to: '/trainer/classes', label: 'Lớp dạy & điểm danh', icon: <CalendarDays size={s} /> },
           { to: '/trainer/reviews', label: 'Đánh giá của tôi', icon: <Star size={s} /> },
@@ -59,8 +108,8 @@ function useNav(role: Role): { section: string; items: NavItem[] }[] {
           { to: '/staff/checkin', label: 'Check-in / Check-out', icon: <ScanLine size={s} /> },
           { to: '/staff/member-cards', label: 'Cấp / Khóa thẻ hội viên', icon: <CreditCard size={s} /> },
           { to: '/staff/history', label: 'Lịch sử check-in', icon: <History size={s} /> },
-          { to: '/staff/freeze', label: 'Yêu cầu freeze', icon: <Snowflake size={s} />, count: pendingFreeze },
-          { to: '/staff/equipment', label: 'Thiết bị & sự cố', icon: <Wrench size={s} />, count: pendingEq },
+          { to: '/staff/freeze', label: 'Yêu cầu freeze', icon: <Snowflake size={s} />, count: counts.freeze },
+          { to: '/staff/equipment', label: 'Thiết bị & sự cố', icon: <Wrench size={s} />, count: counts.eq },
           { to: '/staff/members', label: 'Tra cứu hội viên', icon: <Users size={s} /> },
         ] },
         { section: 'Tài khoản', items: [{ to: '/account', label: 'Tài khoản', icon: <KeyRound size={s} /> }] },
@@ -76,10 +125,10 @@ function useNav(role: Role): { section: string; items: NavItem[] }[] {
           { to: '/admin/branches', label: 'Chi nhánh', icon: <Building2 size={s} /> },
           { to: '/admin/plans', label: 'Danh mục gói tập', icon: <Package size={s} /> },
           { to: '/admin/classes', label: 'Lớp học nhóm', icon: <CalendarDays size={s} /> },
-          { to: '/admin/equipment', label: 'Thiết bị', icon: <Wrench size={s} />, count: pendingEq },
+          { to: '/admin/equipment', label: 'Thiết bị', icon: <Wrench size={s} />, count: counts.eq },
           { to: '/admin/checkins', label: 'Lịch sử check-in', icon: <History size={s} /> },
-          { to: '/admin/settings', label: 'Cấu hình hệ thống', icon: <Settings size={s} /> },
         ] },
+        { section: 'Tài khoản', items: [{ to: '/account', label: 'Tài khoản', icon: <KeyRound size={s} /> }] },
       ];
   }
 }
@@ -92,26 +141,63 @@ export const ntfStyle: Record<Notification['type'], { c: string; i: ReactNode }>
 };
 
 function NotificationBell() {
-  const { db, user, act } = useApp();
+  const { user } = useApp();
   const nav = useNavigate();
   const [open, setOpen] = useState(false);
+  const [list, setList] = useState<NotificationApiDto[]>([]);
   const ref = useRef<HTMLDivElement>(null);
-  const list = db.notifications.filter((n) => n.userId === user?.id);
-  const unread = list.filter((n) => !n.read).length;
+
+  const loadNotifications = useCallback(async () => {
+    if (!user || !getAuthToken()) return;
+    try {
+      const data = await notificationsApi.getAll();
+      setList(data);
+    } catch {
+      // bỏ qua nếu chưa đăng nhập hoặc token hết hạn
+    }
+  }, [user]);
+
+  useEffect(() => {
+    loadNotifications();
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, loadNotifications);
+    return () => window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, loadNotifications);
+  }, [loadNotifications]);
+
+  useEffect(() => {
+    if (open) loadNotifications();
+  }, [open, loadNotifications]);
+
   useEffect(() => {
     const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
-  const markAll = () => act((d) => d.notifications.forEach((n) => n.userId === user?.id && (n.read = true)));
-  const openN = (n: Notification) => {
-    act((d) => {
-      const x = d.notifications.find((y) => y.id === n.id);
-      if (x) x.read = true;
-    });
-    setOpen(false);
-    if (n.link) nav(n.link);
+
+  const unread = list.filter((n) => !n.isRead).length;
+
+  const markAll = async () => {
+    try {
+      await notificationsApi.markAllAsRead();
+      setList((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    } catch {
+      // ignore
+    }
   };
+
+  const openN = async (n: NotificationApiDto) => {
+    if (!n.isRead) {
+      try {
+        await notificationsApi.markAsRead(n.id);
+        setList((prev) => prev.map((x) => (x.id === n.id ? { ...x, isRead: true } : x)));
+      } catch {
+        // ignore
+      }
+    }
+    setOpen(false);
+    const link = resolveNotificationLink(n, user?.role);
+    if (link) nav(link);
+  };
+
   return (
     <div style={{ position: 'relative' }} ref={ref}>
       <button className="icon-btn" onClick={() => setOpen(!open)} id="notification-bell" aria-label="Thông báo">
@@ -125,16 +211,19 @@ function NotificationBell() {
             <button className="btn ghost sm" onClick={markAll} disabled={!unread}>Đánh dấu đã đọc</button>
           </div>
           {list.length === 0 && <div className="empty">Chưa có thông báo</div>}
-          {list.slice(0, 8).map((n) => (
-            <div key={n.id} className={`ntf-item ${n.read ? '' : 'unread'}`} onClick={() => openN(n)}>
-              <div className="ntf-icon" style={{ background: ntfStyle[n.type].c + '22', color: ntfStyle[n.type].c }}>{ntfStyle[n.type].i}</div>
-              <div style={{ minWidth: 0 }}>
-                <div className="bold" style={{ fontSize: 13.5 }}>{n.title}</div>
-                <div className="small muted">{n.message}</div>
-                <div className="small dim mt8" style={{ marginTop: 4 }}>{timeAgo(n.createdAt)}</div>
+          {list.slice(0, 8).map((n) => {
+            const st = ntfStyle[mapNotificationType(n.type)];
+            return (
+              <div key={n.id} className={`ntf-item ${n.isRead ? '' : 'unread'}`} onClick={() => openN(n)}>
+                <div className="ntf-icon" style={{ background: st.c + '22', color: st.c }}>{st.i}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div className="bold" style={{ fontSize: 13.5 }}>{n.title}</div>
+                  <div className="small muted">{n.content}</div>
+                  <div className="small dim mt8" style={{ marginTop: 4 }}>{timeAgo(n.createdAt)}</div>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           <button className="btn ghost block" style={{ borderRadius: 0, padding: 12 }} onClick={() => { setOpen(false); nav('/notifications'); }}>
             Xem tất cả thông báo
           </button>
@@ -145,7 +234,7 @@ function NotificationBell() {
 }
 
 export function Layout({ role }: { role: Role }) {
-  const { user, logout, reset, db, theme, toggleTheme } = useApp();
+  const { user, logout, theme, toggleTheme } = useApp();
   const nav = useNavigate();
   const loc = useLocation();
   const [open, setOpen] = useState(false);
@@ -153,14 +242,14 @@ export function Layout({ role }: { role: Role }) {
   useEffect(() => setOpen(false), [loc.pathname]);
   if (!user) return <Navigate to="/login" replace />;
   if (user.role !== role) return <Navigate to={homeOf(user.role)} replace />;
-  const branch = db.branches.find((b) => b.id === user.branchId);
+
   return (
     <div className="app">
       <aside className={`sidebar ${open ? 'open' : ''}`}>
         <div className="brand">
           <div className="brand-logo"><Zap size={22} color="#fff" fill="#fff" /></div>
           <div>
-            <div className="brand-name">OOAD<span className="grad-text">Center</span></div>
+            <div className="brand-name">DFGym<span className="grad-text">Center</span></div>
             <div className="brand-sub">{roleLabel[role][0]}</div>
           </div>
         </div>
@@ -178,13 +267,9 @@ export function Layout({ role }: { role: Role }) {
             </div>
           ))}
           <div className="nav-section">Khác</div>
-          <NavLink to="/rules"><BookOpen size={18} />Nội quy & Quy tắc</NavLink>
           <NavLink to="/notifications"><Bell size={18} />Thông báo</NavLink>
         </nav>
         <div className="sidebar-foot col">
-          <button className="btn ghost sm" style={{ justifyContent: 'flex-start' }} onClick={reset} id="reset-demo">
-            <RotateCcw size={15} /> Khôi phục dữ liệu demo
-          </button>
           <button className="btn ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => { logout(); nav('/login'); }} id="logout-btn">
             <LogOut size={15} /> Đăng xuất
           </button>
@@ -197,7 +282,7 @@ export function Layout({ role }: { role: Role }) {
           <div className="small muted">
             {new Date().toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}
           </div>
-          {branch && <Badge color="purple">{branch.name}</Badge>}
+          {user.branchName && <Badge color="purple">{user.branchName}</Badge>}
           <div className="spacer" />
           <button
             className="btn ghost sm theme-toggle-btn"
@@ -219,7 +304,12 @@ export function Layout({ role }: { role: Role }) {
             )}
           </button>
           <NotificationBell />
-          <div className="row" style={{ gap: 10 }}>
+          <div
+            className="row"
+            style={{ gap: 10, cursor: 'pointer' }}
+            onClick={() => nav('/account')}
+            title="Xem & chỉnh sửa hồ sơ cá nhân"
+          >
             <Avatar user={user} />
             <div style={{ lineHeight: 1.25 }}>
               <div className="bold" style={{ fontSize: 13.5 }}>{user.fullName}</div>

@@ -1,388 +1,483 @@
-import { useState } from 'react';
-import { Plus, Edit2, Trash2, CalendarDays } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Plus, RefreshCw } from 'lucide-react';
+import { getAuthToken, isApiNetworkError } from '../../../api/apiClient';
+import { branchesApi } from '../../../api/branchesApi';
+import { classesApi, type ApiClassSessionDto, type ApiGymClassDto } from '../../../api/classesApi';
+import { PageHead, Tabs } from '../../../components/ui';
+import { trainerService, type TrainerItem } from '../../../services/trainer.service';
 import { useApp } from '../../../store/AppContext';
 import * as L from '../../../store/logic';
-import { Badge, Modal, PageHead } from '../../../components/ui';
-import { fmtDateTime, fmtTime, WEEKDAYS, uid } from '../../../utils';
-import type { GroupClass } from '../../../types';
+import { addDays, atTime, todayStr } from '../../../utils';
+import { getMondayStr } from '../../member/MemberBooking';
+import { AdminClassCatalogTab } from './classes/AdminClassCatalogTab';
+import {
+  CancelSessionModal,
+  ClassFormModal,
+  RescheduleSessionModal,
+} from './classes/AdminClassModals';
+import { AdminWeeklySessionsTab } from './classes/AdminWeeklySessionsTab';
+import { DEFAULT_ROOMS, type BranchOption, type TrainerOption } from './classes/types';
 
 export function AdminClassesScreen() {
-  const { db, act } = useApp();
-  const [classModal, setClassModal] = useState<GroupClass | 'new' | null>(null);
-  const [rescheduleSessionId, setRescheduleSessionId] = useState<string | null>(null);
+  const { db, act, toast } = useApp();
+
+  const [activeTab, setActiveTab] = useState<'catalog' | 'sessions'>('catalog');
+  const [branchFilter, setBranchFilter] = useState<string>('all');
+  const [classFilter, setClassFilter] = useState<string>('all');
+  const [catalogSearch, setCatalogSearch] = useState<string>('');
+  const [weekIdx, setWeekIdx] = useState<number>(0);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  const [classModal, setClassModal] = useState<ApiGymClassDto | 'new' | null>(null);
+  const [rescheduleSession, setRescheduleSession] = useState<ApiClassSessionDto | null>(null);
   const [cancelSessionId, setCancelSessionId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
 
-  const now = Date.now();
-  const upcomingSessions = db.sessions
-    .filter((s) => s.status === 'scheduled' && new Date(s.startAt).getTime() > now)
-    .sort((a, b) => a.startAt.localeCompare(b.startAt));
+  const [apiMode, setApiMode] = useState<boolean>(true);
+  const [loadingMeta, setLoadingMeta] = useState<boolean>(false);
+  const [loadingSessions, setLoadingSessions] = useState<boolean>(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [apiClasses, setApiClasses] = useState<ApiGymClassDto[]>([]);
+  const [apiSessions, setApiSessions] = useState<ApiClassSessionDto[]>([]);
+  const [apiBranches, setApiBranches] = useState<BranchOption[]>([]);
+  const [apiTrainers, setApiTrainers] = useState<TrainerItem[]>([]);
 
-  const handleDeleteClass = (cId: string) => {
-    if (confirm('Bạn có chắc muốn ngừng hoạt động lớp này? Các buổi tương lai chưa diễn ra sẽ tự động bị hủy và hoàn lượt cho học viên.')) {
+  const weekMonday = useMemo(() => getMondayStr(todayStr(), weekIdx), [weekIdx]);
+  const weekDays = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDays(weekMonday, i)),
+    [weekMonday],
+  );
+
+  const loadCatalogAndMeta = useCallback(async () => {
+    setLoadingMeta(true);
+    try {
+      const [cls, brs, trs] = await Promise.all([
+        classesApi.getAll(),
+        branchesApi.getAll(),
+        trainerService.getAllTrainers(),
+      ]);
+      setApiClasses(cls);
+      setApiBranches(
+        brs.map((b) => ({
+          id: b.id,
+          name: b.name,
+          rooms: (b as unknown as { rooms?: string[] }).rooms ?? DEFAULT_ROOMS,
+        })),
+      );
+      setApiTrainers(trs);
+      setApiMode(true);
+    } catch (err) {
+      if (isApiNetworkError(err)) {
+        setApiMode(false);
+      } else {
+        toast((err as Error).message, 'error');
+      }
+    } finally {
+      setLoadingMeta(false);
+    }
+  }, [toast]);
+
+  const loadWeekSessions = useCallback(async () => {
+    setLoadingSessions(true);
+    try {
+      const fromIso = atTime(weekDays[0], '00:00');
+      const toIso = atTime(weekDays[6], '23:59');
+      const ses = await classesApi.getSessions({ from: fromIso, to: toIso });
+      setApiSessions(ses);
+      setNowMs(Date.now());
+      setApiMode(true);
+    } catch (err) {
+      if (isApiNetworkError(err)) {
+        setApiMode(false);
+      } else {
+        toast((err as Error).message, 'error');
+      }
+    } finally {
+      setLoadingSessions(false);
+    }
+  }, [weekDays, toast]);
+
+  const loadAll = useCallback(async () => {
+    await Promise.all([loadCatalogAndMeta(), loadWeekSessions()]);
+  }, [loadCatalogAndMeta, loadWeekSessions]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      classesApi.getAll(),
+      branchesApi.getAll(),
+      trainerService.getAllTrainers(),
+    ])
+      .then(([cls, brs, trs]) => {
+        if (cancelled) return;
+        setApiClasses(cls);
+        setApiBranches(
+          brs.map((b) => ({
+            id: b.id,
+            name: b.name,
+            rooms: (b as unknown as { rooms?: string[] }).rooms ?? DEFAULT_ROOMS,
+          })),
+        );
+        setApiTrainers(trs);
+        setApiMode(true);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (isApiNetworkError(err)) {
+          setApiMode(false);
+        } else {
+          toast((err as Error).message, 'error');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [toast]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fromIso = atTime(weekDays[0], '00:00');
+    const toIso = atTime(weekDays[6], '23:59');
+    classesApi
+      .getSessions({ from: fromIso, to: toIso })
+      .then((ses) => {
+        if (cancelled) return;
+        setApiSessions(ses);
+        setNowMs(Date.now());
+        setApiMode(true);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (isApiNetworkError(err)) {
+          setApiMode(false);
+        } else {
+          toast((err as Error).message, 'error');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [weekDays, toast]);
+
+  const branchOptions: BranchOption[] = useMemo(
+    () =>
+      apiMode
+        ? apiBranches
+        : db.branches.map((b) => ({ id: b.id, name: b.name, rooms: b.rooms })),
+    [apiMode, apiBranches, db.branches],
+  );
+
+  const trainerOptions: TrainerOption[] = useMemo(() => {
+    if (apiMode) {
+      return apiTrainers.map((t) => ({
+        id: t.id,
+        fullName: t.fullName,
+        branchName: t.branchName || '',
+      }));
+    }
+    return db.users
+      .filter((u) => u.role === 'trainer' && !u.locked)
+      .map((u) => ({ id: u.id, fullName: u.fullName, branchName: '' }));
+  }, [apiMode, apiTrainers, db.users]);
+
+  const classesList: ApiGymClassDto[] = useMemo(() => {
+    const list = apiMode
+      ? apiClasses.filter((c) => c.active)
+      : db.classes
+          .filter((c) => c.active)
+          .map((c) => ({
+            id: c.id,
+            branchId: c.branchId,
+            branchName: L.branchById(db, c.branchId)?.name ?? '',
+            trainerId: c.trainerId,
+            trainerUserId: c.trainerId,
+            trainerName: L.userById(db, c.trainerId)?.fullName ?? 'Chưa gán',
+            name: c.name,
+            room: c.room,
+            capacity: c.capacity,
+            dayOfWeek: c.daysOfWeek[0] ?? 1,
+            daysOfWeek: c.daysOfWeek,
+            startTime: c.startTime,
+            endTime: '',
+            durationMinutes: c.durationMin,
+            category: c.category,
+            color: c.color,
+            upcomingSessionCount: db.sessions.filter(
+              (s) =>
+                s.classId === c.id &&
+                s.status === 'scheduled' &&
+                new Date(s.startAt).getTime() > nowMs,
+            ).length,
+            active: c.active,
+            averageRating: 5,
+            reviewCount: 0,
+          }));
+
+    return branchFilter === 'all' ? list : list.filter((c) => c.branchId === branchFilter);
+  }, [apiMode, apiClasses, db, branchFilter, nowMs]);
+
+  const effectiveClassFilter = useMemo(
+    () => (classFilter !== 'all' && classesList.some((c) => c.id === classFilter) ? classFilter : 'all'),
+    [classesList, classFilter],
+  );
+
+  const allComparisonSessions: ApiClassSessionDto[] = useMemo(() => {
+    if (apiMode) return apiSessions;
+    return db.sessions.map((s) => {
+      const c = L.classById(db, s.classId)!;
+      const tr = L.userById(db, s.trainerId);
+      const booked = L.bookedCount(db, s.id);
+      const wl = L.waitlistOf(db, s.id).length;
+      return {
+        id: s.id,
+        classId: s.classId,
+        className: c?.name ?? '',
+        category: c?.category ?? '',
+        color: c?.color ?? '#7c5cff',
+        branchId: c?.branchId ?? '',
+        branchName: L.branchById(db, c?.branchId)?.name ?? '',
+        trainerId: s.trainerId,
+        trainerUserId: s.trainerId,
+        trainerName: tr?.fullName ?? '',
+        room: s.room,
+        capacity: c?.capacity ?? 20,
+        sessionDate: s.date,
+        startAt: s.startAt,
+        endAt: s.endAt,
+        durationMinutes: c?.durationMin ?? 60,
+        status:
+          s.status === 'cancelled'
+            ? 'CANCELLED'
+            : s.status === 'completed'
+              ? 'COMPLETED'
+              : booked >= (c?.capacity ?? 20)
+                ? 'FULL'
+                : 'SCHEDULED',
+        bookedCount: booked,
+        availableSlots: Math.max(0, (c?.capacity ?? 20) - booked),
+        waitlistCount: wl,
+        attendanceConfirmed: s.attendanceConfirmed,
+        attendedCount: 0,
+        canJoinWaitlist: false,
+        hoursUntilStart: 24,
+        averageRating: 5,
+        reviewCount: 0,
+      };
+    });
+  }, [apiMode, apiSessions, db]);
+
+  const weekSessionsList: ApiClassSessionDto[] = useMemo(() => {
+    return allComparisonSessions
+      .filter((s) => weekDays.includes(s.sessionDate.slice(0, 10)) || apiMode)
+      .filter((s) => branchFilter === 'all' || s.branchId === branchFilter)
+      .sort((a, b) => a.startAt.localeCompare(b.startAt));
+  }, [allComparisonSessions, weekDays, apiMode, branchFilter]);
+
+  const activeWeekSessionCount = useMemo(
+    () => weekSessionsList.filter((s) => s.status !== 'CANCELLED').length,
+    [weekSessionsList],
+  );
+
+  const handleDeleteClass = async (cId: string) => {
+    if (
+      !confirm(
+        'Bạn có chắc muốn ngừng/xóa lớp này? Các buổi tương lai chưa diễn ra sẽ tự động bị hủy và hoàn lượt cho học viên.',
+      )
+    ) {
+      return;
+    }
+
+    if (!apiMode) {
       act((d) => L.deleteClass(d, cId), 'Đã ngừng hoạt động lớp học');
+      return;
+    }
+
+    if (!getAuthToken()) {
+      toast('Vui lòng đăng nhập lại bằng tài khoản Admin.', 'error');
+      return;
+    }
+
+    setBusyId(cId);
+    try {
+      await classesApi.remove(cId);
+      toast('Đã hủy các buổi sắp tới và xóa lớp học thành công.');
+      await loadAll();
+    } catch (err) {
+      toast((err as Error).message, 'error');
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const handleConfirmCancelSession = () => {
-    if (!cancelSessionId) return;
-    act((d) => L.cancelSession(d, cancelSessionId, cancelReason || 'HLV bận đột xuất / Sự cố phòng tập'), 'Đã hủy buổi học và gửi thông báo hoàn lượt');
-    setCancelSessionId(null);
-    setCancelReason('');
+  const handleGenerateMore = async (c: ApiGymClassDto) => {
+    if (!apiMode) return;
+    setBusyId(c.id);
+    try {
+      const added = await classesApi.generateSessions(c.id, {
+        weeks: 2,
+        daysOfWeek: c.daysOfWeek,
+      });
+      toast(
+        `Đã sinh thêm ${added.length} buổi học cho lớp ${c.name}.`,
+        added.length > 0 ? 'success' : 'info',
+      );
+      await loadAll();
+    } catch (err) {
+      toast((err as Error).message, 'error');
+    } finally {
+      setBusyId(null);
+    }
   };
+
+  const handleConfirmCancelSession = async () => {
+    if (!cancelSessionId) return;
+    const targetId = cancelSessionId;
+    const reason = cancelReason.trim() || 'HLV bận đột xuất / Sự cố phòng tập';
+
+    if (!apiMode) {
+      act(
+        (d) => L.cancelSession(d, targetId, reason),
+        'Đã hủy buổi học và gửi thông báo hoàn lượt',
+      );
+      setCancelSessionId(null);
+      setCancelReason('');
+      return;
+    }
+
+    setBusyId(targetId);
+    try {
+      await classesApi.cancelSession(targetId, reason);
+      toast('Đã hủy buổi học, hoàn lượt đặt và gửi thông báo cho học viên & HLV.');
+      setCancelSessionId(null);
+      setCancelReason('');
+      await loadAll();
+    } catch (err) {
+      toast((err as Error).message, 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleViewClassSchedule = (classId: string) => {
+    setClassFilter(classId);
+    setActiveTab('sessions');
+  };
+
+  const loading = loadingMeta || loadingSessions;
 
   return (
     <>
       <PageHead
         title="Quản lý Lớp học Nhóm"
-        desc="Tạo và quản lý các lớp học nhóm, phân công HLV phụ trách, phòng tập và lịch lặp lại. Hủy hoặc đổi lịch từng buổi cụ thể."
+        desc="Quản lý danh mục lớp định kỳ và xem lịch buổi học từng tuần để đổi lịch hoặc hủy buổi nhanh chóng."
         actions={
-          <button className="btn primary" onClick={() => setClassModal('new')} id="btn-add-class">
-            <Plus size={16} /> Tạo lớp học mới
-          </button>
+          <div className="row wrap" style={{ gap: 8 }}>
+            {apiMode && (
+              <button className="btn sm" onClick={loadAll} disabled={loading}>
+                <RefreshCw size={14} /> {loading ? 'Đang tải...' : 'Làm mới'}
+              </button>
+            )}
+            <button className="btn primary" onClick={() => setClassModal('new')} id="btn-add-class">
+              <Plus size={16} /> Tạo lớp học mới
+            </button>
+          </div>
         }
       />
 
-      <div className="card-head mt24">
-        <h2>Danh mục lớp học ({db.classes.filter((c) => c.active).length})</h2>
+      <div className="row between wrap mb16" style={{ gap: 12, alignItems: 'center' }}>
+        <Tabs
+          value={activeTab}
+          onChange={setActiveTab}
+          tabs={[
+            { id: 'catalog', label: 'Danh mục lớp học', count: classesList.length },
+            { id: 'sessions', label: 'Lịch buổi học theo tuần', count: activeWeekSessionCount },
+          ]}
+        />
+
+        <select
+          className="input"
+          style={{ maxWidth: 280 }}
+          value={branchFilter}
+          onChange={(e) => {
+            setBranchFilter(e.target.value);
+            setClassFilter('all');
+          }}
+          id="admin-branch-filter"
+        >
+          <option value="all">Tất cả chi nhánh</option>
+          {branchOptions.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+            </option>
+          ))}
+        </select>
       </div>
 
-      <div className="grid g3 mb24">
-        {db.classes.filter((c) => c.active).map((c) => {
-          const trainer = L.userById(db, c.trainerId);
-          const branch = L.branchById(db, c.branchId);
-          return (
-            <div className="card hover" key={c.id} style={{ borderLeft: `4px solid ${c.color}` }}>
-              <div className="card-head">
-                <div>
-                  <Badge color="purple" plain>{c.category}</Badge>
-                  <h2 className="mt8">{c.name}</h2>
-                </div>
-                <div className="row" style={{ gap: 6 }}>
-                  <button className="btn sm ghost" onClick={() => setClassModal(c)} id={`edit-class-${c.id}`}>
-                    <Edit2 size={14} /> Sửa
-                  </button>
-                  <button className="btn sm danger" onClick={() => handleDeleteClass(c.id)} id={`del-class-${c.id}`}>
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-
-              <div className="small muted">{c.description}</div>
-              <div className="divider" />
-
-              <div className="col small" style={{ gap: 6 }}>
-                <div><b>HLV phụ trách:</b> {trainer?.fullName || 'Chưa gán'}</div>
-                <div><b>Địa điểm:</b> {c.room} · {branch?.name}</div>
-                <div><b>Khung giờ:</b> {c.startTime} ({c.durationMin} phút)</div>
-                <div><b>Lịch lặp lại:</b> {c.daysOfWeek.map((d) => WEEKDAYS[d]).join(', ')}</div>
-                <div><b>Sĩ số tối đa:</b> {c.capacity} học viên</div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="card">
-        <div className="card-head">
-          <h2><CalendarDays size={18} /> Các buổi học sắp diễn ra & Đổi/Hủy lịch</h2>
-          <span className="small muted">{upcomingSessions.length} buổi học tương lai</span>
-        </div>
-
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Lớp học</th>
-                <th>Thời gian</th>
-                <th>Chi nhánh & Phòng</th>
-                <th>Huấn luyện viên</th>
-                <th>Đã đăng ký / Chờ</th>
-                <th style={{ textAlign: 'right' }}>Thao tác</th>
-              </tr>
-            </thead>
-            <tbody>
-              {upcomingSessions.slice(0, 15).map((s) => {
-                const c = L.classById(db, s.classId)!;
-                const tr = L.userById(db, s.trainerId);
-                const booked = L.bookedCount(db, s.id);
-                const wl = L.waitlistOf(db, s.id).length;
-                return (
-                  <tr key={s.id}>
-                    <td>
-                      <div className="row">
-                        <span style={{ width: 8, height: 8, borderRadius: 2, background: c?.color }} />
-                        <b>{c?.name}</b>
-                      </div>
-                    </td>
-                    <td>{fmtDateTime(s.startAt)}</td>
-                    <td className="small">{L.branchById(db, c?.branchId)?.name} ({s.room})</td>
-                    <td className="small">{tr?.fullName}</td>
-                    <td>
-                      <Badge color={c && booked >= c.capacity ? 'amber' : 'green'}>
-                        {booked}/{c?.capacity}
-                      </Badge>
-                      {wl > 0 && <span className="small dim" style={{ marginLeft: 6 }}>+{wl} chờ</span>}
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <div className="row" style={{ justifyContent: 'flex-end', gap: 6 }}>
-                        <button
-                          className="btn sm"
-                          onClick={() => setRescheduleSessionId(s.id)}
-                          id={`reschedule-${s.id}`}
-                        >
-                          Đổi lịch
-                        </button>
-                        <button
-                          className="btn sm danger"
-                          onClick={() => setCancelSessionId(s.id)}
-                          id={`cancel-session-${s.id}`}
-                        >
-                          Hủy buổi
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {activeTab === 'catalog' ? (
+        <AdminClassCatalogTab
+          classes={classesList}
+          apiMode={apiMode}
+          busyId={busyId}
+          search={catalogSearch}
+          onSearchChange={setCatalogSearch}
+          onEdit={(cls) => setClassModal(cls)}
+          onDelete={handleDeleteClass}
+          onGenerateMore={handleGenerateMore}
+          onViewClassSchedule={handleViewClassSchedule}
+          onCreateNew={() => setClassModal('new')}
+        />
+      ) : (
+        <AdminWeeklySessionsTab
+          weekIdx={weekIdx}
+          weekDays={weekDays}
+          onWeekIdxChange={(next) => {
+            setWeekIdx(next);
+            setNowMs(Date.now());
+          }}
+          sessions={weekSessionsList}
+          classes={classesList}
+          classFilter={effectiveClassFilter}
+          onClassFilterChange={setClassFilter}
+          loading={loadingSessions}
+          nowMs={nowMs}
+          onReschedule={(session) => setRescheduleSession(session)}
+          onCancelSession={(id) => setCancelSessionId(id)}
+        />
+      )}
 
       {classModal && (
         <ClassFormModal
           cls={classModal === 'new' ? null : classModal}
+          apiMode={apiMode}
+          branches={branchOptions}
+          trainers={trainerOptions}
+          onSaved={loadAll}
           onClose={() => setClassModal(null)}
         />
       )}
 
-      {rescheduleSessionId && (
+      {rescheduleSession && (
         <RescheduleSessionModal
-          sessionId={rescheduleSessionId}
-          onClose={() => setRescheduleSessionId(null)}
+          session={rescheduleSession}
+          apiMode={apiMode}
+          branches={branchOptions}
+          trainers={trainerOptions}
+          allSessions={allComparisonSessions}
+          onSaved={loadAll}
+          onClose={() => setRescheduleSession(null)}
         />
       )}
 
       {cancelSessionId && (
-        <Modal
-          title="Hủy buổi học cụ thể"
+        <CancelSessionModal
+          reason={cancelReason}
+          busy={busyId === cancelSessionId}
+          onReasonChange={setCancelReason}
+          onConfirm={handleConfirmCancelSession}
           onClose={() => setCancelSessionId(null)}
-          footer={
-            <>
-              <button className="btn" onClick={() => setCancelSessionId(null)}>Quay lại</button>
-              <button className="btn danger" onClick={handleConfirmCancelSession} id="confirm-cancel-session">
-                Xác nhận hủy
-              </button>
-            </>
-          }
-        >
-          <p className="muted mb16">
-            Hủy buổi học sẽ tự động hủy các lịch đặt của hội viên, hoàn trả lượt đặt và gửi thông báo đến các bên liên quan.
-          </p>
-          <div className="field">
-            <label>Lý do hủy buổi học</label>
-            <input
-              className="input"
-              value={cancelReason}
-              onChange={(e) => setCancelReason(e.target.value)}
-              placeholder="VD: Phòng tập bảo trì điện nước đột xuất"
-              id="cancel-reason"
-            />
-          </div>
-        </Modal>
+        />
       )}
     </>
-  );
-}
-
-function ClassFormModal({ cls, onClose }: { cls: GroupClass | null; onClose: () => void }) {
-  const { db, act } = useApp();
-  const trainers = db.users.filter((u) => u.role === 'trainer' && !u.locked);
-
-  const [name, setName] = useState(cls?.name || '');
-  const [category, setCategory] = useState(cls?.category || 'Yoga');
-  const [description, setDescription] = useState(cls?.description || '');
-  const [trainerId, setTrainerId] = useState(cls?.trainerId || trainers[0]?.id || '');
-  const [branchId, setBranchId] = useState(cls?.branchId || db.branches[0]?.id || '');
-  const [room, setRoom] = useState(cls?.room || 'Phòng Yoga');
-  const [daysOfWeek, setDaysOfWeek] = useState<number[]>(cls?.daysOfWeek || [1, 3, 5]);
-  const [startTime, setStartTime] = useState(cls?.startTime || '07:00');
-  const [durationMin, setDurationMin] = useState(cls?.durationMin || 60);
-  const [capacity, setCapacity] = useState(cls?.capacity || 15);
-  const [color, setColor] = useState(cls?.color || '#2ed47a');
-
-  const selectedBranch = db.branches.find((b) => b.id === branchId) || db.branches[0];
-
-  const handleSave = () => {
-    act((d) => {
-      if (!name.trim()) throw new Error('Vui lòng nhập tên lớp');
-      if (daysOfWeek.length === 0) throw new Error('Vui lòng chọn ít nhất một ngày trong tuần');
-      const data: GroupClass = {
-        id: cls ? cls.id : uid('cl'),
-        name: name.trim(),
-        category: category.trim(),
-        description: description.trim(),
-        trainerId,
-        branchId,
-        room,
-        daysOfWeek,
-        startTime,
-        durationMin,
-        capacity,
-        color,
-        active: true,
-      };
-      L.saveClass(d, data);
-    }, cls ? 'Đã cập nhật thông tin lớp học' : 'Đã tạo lớp học mới và sinh lịch');
-    onClose();
-  };
-
-  return (
-    <Modal
-      wide
-      title={cls ? `Chỉnh sửa lớp: ${cls.name}` : 'Tạo lớp học nhóm mới'}
-      onClose={onClose}
-      footer={
-        <>
-          <button className="btn" onClick={onClose}>Hủy</button>
-          <button className="btn primary" onClick={handleSave} id="save-class">Lưu lớp học</button>
-        </>
-      }
-    >
-      <div className="form-grid">
-        <div className="field">
-          <label>Tên lớp học *</label>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="VD: Yoga Flow Sáng" id="class-name" />
-        </div>
-        <div className="field">
-          <label>Thể loại *</label>
-          <input className="input" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Yoga, Cardio, HIIT, Boxing..." />
-        </div>
-        <div className="field">
-          <label>Chi nhánh mở lớp *</label>
-          <select className="input" value={branchId} onChange={(e) => { setBranchId(e.target.value); setRoom(db.branches.find((b) => b.id === e.target.value)?.rooms[0] || ''); }}>
-            {db.branches.map((b) => (
-              <option key={b.id} value={b.id}>{b.name}</option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Phòng tập *</label>
-          <select className="input" value={room} onChange={(e) => setRoom(e.target.value)}>
-            {selectedBranch?.rooms.map((r) => (
-              <option key={r} value={r}>{r}</option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Huấn luyện viên phụ trách *</label>
-          <select className="input" value={trainerId} onChange={(e) => setTrainerId(e.target.value)}>
-            {trainers.map((t) => (
-              <option key={t.id} value={t.id}>{t.fullName}</option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Giờ bắt đầu *</label>
-          <input type="time" className="input" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Thời lượng (phút) *</label>
-          <input type="number" min={15} step={15} className="input" value={durationMin} onChange={(e) => setDurationMin(+e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Sĩ số tối đa *</label>
-          <input type="number" min={1} className="input" value={capacity} onChange={(e) => setCapacity(+e.target.value)} />
-        </div>
-        <div className="field full">
-          <label>Các ngày lặp lại trong tuần *</label>
-          <div className="chips">
-            {[0, 1, 2, 3, 4, 5, 6].map((dayIndex) => {
-              const sel = daysOfWeek.includes(dayIndex);
-              return (
-                <button
-                  key={dayIndex}
-                  className={`chip ${sel ? 'on' : ''}`}
-                  onClick={() => setDaysOfWeek(sel ? daysOfWeek.filter((x) => x !== dayIndex) : [...daysOfWeek, dayIndex])}
-                >
-                  {WEEKDAYS[dayIndex]}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        <div className="field full">
-          <label>Màu hiển thị trên lịch</label>
-          <input type="color" value={color} onChange={(e) => setColor(e.target.value)} style={{ width: 80, height: 38, border: 'none', background: 'transparent', cursor: 'pointer' }} />
-        </div>
-        <div className="field full">
-          <label>Mô tả lớp học</label>
-          <textarea className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Mô tả nội dung bài tập, đối tượng phù hợp..." />
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-function RescheduleSessionModal({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
-  const { db, act } = useApp();
-  const s = L.sessionById(db, sessionId)!;
-  const c = L.classById(db, s.classId)!;
-  const branch = L.branchById(db, c.branchId);
-  const trainers = db.users.filter((u) => u.role === 'trainer' && !u.locked);
-
-  const [date, setDate] = useState(s.date);
-  const [time, setTime] = useState(fmtTime(s.startAt));
-  const [room, setRoom] = useState(s.room);
-  const [trainerId, setTrainerId] = useState(s.trainerId);
-
-  const handleSave = () => {
-    act((d) => {
-      L.rescheduleSession(d, sessionId, date, time, room, trainerId);
-    }, 'Đã cập nhật lịch buổi học và gửi thông báo cho các bên');
-    onClose();
-  };
-
-  return (
-    <Modal
-      title={`Đổi lịch: ${c.name}`}
-      onClose={onClose}
-      footer={
-        <>
-          <button className="btn" onClick={onClose}>Hủy</button>
-          <button className="btn primary" onClick={handleSave} id="save-reschedule">Xác nhận đổi lịch</button>
-        </>
-      }
-    >
-      <div className="form-grid">
-        <div className="field">
-          <label>Ngày học mới *</label>
-          <input type="date" className="input" value={date} onChange={(e) => setDate(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Giờ bắt đầu mới *</label>
-          <input type="time" className="input" value={time} onChange={(e) => setTime(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Phòng tập</label>
-          <select className="input" value={room} onChange={(e) => setRoom(e.target.value)}>
-            {branch?.rooms.map((r) => (
-              <option key={r} value={r}>{r}</option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Huấn luyện viên phụ trách</label>
-          <select className="input" value={trainerId} onChange={(e) => setTrainerId(e.target.value)}>
-            {trainers.map((t) => (
-              <option key={t.id} value={t.id}>{t.fullName}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-      <p className="small muted mt16">💡 Hệ thống sẽ tự động gửi thông báo đến tất cả học viên đã đăng ký về sự thay đổi lịch học này.</p>
-    </Modal>
   );
 }
 
