@@ -1,17 +1,44 @@
 using System.Security.Cryptography;
+using Microsoft.EntityFrameworkCore;
 using OOAD.Domain.Entities;
 using OOAD.Domain.Interfaces;
 using OOAD.Infrastructure.Persistence.Context;
-using Microsoft.EntityFrameworkCore;
 
 namespace OOAD.Infrastructure.Repositories;
 
-public class MemberCardRepository : GenericRepository<MemberCard>, IMemberCardRepository
+public class MemberCardRepository : IMemberCardRepository
 {
     private const string CardAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+    private readonly AppDbContext _context;
 
-    public MemberCardRepository(AppDbContext context) : base(context)
+    public MemberCardRepository(AppDbContext context)
     {
+        _context = context;
+    }
+
+    public async Task<MemberCard?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        return await _context.MemberCards.FirstOrDefaultAsync(mc => mc.Id == id, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<MemberCard>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        return await _context.MemberCards.AsNoTracking().ToListAsync(cancellationToken);
+    }
+
+    public async Task AddAsync(MemberCard entity, CancellationToken cancellationToken = default)
+    {
+        await _context.MemberCards.AddAsync(entity, cancellationToken);
+    }
+
+    public void Update(MemberCard entity)
+    {
+        _context.MemberCards.Update(entity);
+    }
+
+    public void Delete(MemberCard entity)
+    {
+        _context.MemberCards.Remove(entity);
     }
 
     public async Task<MemberCard?> GetByIdWithDetailsAsync(Guid id, CancellationToken cancellationToken = default)

@@ -10,7 +10,7 @@ namespace OOAD.Infrastructure.Persistence.Seed;
 /// <summary>
 /// Bộ khởi tạo và cứu hộ Database tự động (Defense Readiness - Task 1-A).
 /// Dù giảng viên có xóa/drop toàn bộ Database khi chấm bài, khi API khởi động lại
-/// hệ thống sẽ tự động chạy Migration / tạo lại 28 bảng từ AppDbContext (Fluent API) và nạp đầy đủ Seed Data (1-A).
+/// hệ thống sẽ tự động chạy Migration / tạo lại 25 bảng từ AppDbContext (Fluent API) và nạp đầy đủ Seed Data (1-A).
 /// </summary>
 public class AppDbContextInitialiser
 {
@@ -32,7 +32,7 @@ public class AppDbContextInitialiser
     {
         try
         {
-            _logger.LogInformation("Đang kiểm tra và khởi tạo AppDbContext (28 Entities Fluent API)...");
+            _logger.LogInformation("Đang kiểm tra và khởi tạo AppDbContext (25 Entities Fluent API)...");
 
             var migrations = _context.Database.GetMigrations();
             if (migrations.Any())
@@ -44,7 +44,7 @@ public class AppDbContextInitialiser
                 await _context.Database.EnsureCreatedAsync();
             }
 
-            _logger.LogInformation("Khởi tạo cấu trúc 28 bảng Database thành công.");
+            _logger.LogInformation("Khởi tạo cấu trúc 25 bảng Database thành công.");
         }
         catch (Exception ex)
         {
@@ -326,7 +326,7 @@ public class AppDbContextInitialiser
                 await _context.SaveChangesAsync();
             }
 
-            // 4. Seed MetricTypes, GymRules, SystemSettings
+            // 4. Seed MetricTypes
             if (!await _context.MetricTypes.AnyAsync())
             {
                 await _context.MetricTypes.AddRangeAsync(
@@ -335,54 +335,6 @@ public class AppDbContextInitialiser
                     new MetricType { Code = "BODY_FAT", Name = "Tỷ lệ mỡ cơ thể", Unit = "%", IsActive = true },
                     new MetricType { Code = "MUSCLE_MASS", Name = "Khối lượng cơ", Unit = "kg", IsActive = true },
                     new MetricType { Code = "WAIST", Name = "Vòng eo", Unit = "cm", IsActive = true }
-                );
-            }
-
-            if (!await _context.GymRules.AnyAsync())
-            {
-                await _context.GymRules.AddRangeAsync(
-                    new GymRule
-                    {
-                        BranchId = firstBranch.Id,
-                        CreatedBy = adminUser.Id,
-                        Title = "Trang phục & Giày tập tiêu chuẩn",
-                        Content = "Hội viên bắt buộc mang giày thể thao đế mềm và khăn tập cá nhân khi sử dụng khu vực máy tập.",
-                        Category = "ATTIRE",
-                        IsActive = true
-                    },
-                    new GymRule
-                    {
-                        BranchId = firstBranch.Id,
-                        CreatedBy = adminUser.Id,
-                        Title = "Quy định hoàn trả tạ sau khi tập",
-                        Content = "Vui lòng tháo bánh tạ và đặt lại đúng kệ sau khi hoàn thành bài tập để đảm bảo an toàn chung.",
-                        Category = "SAFETY",
-                        IsActive = true
-                    }
-                );
-            }
-
-            if (!await _context.SystemSettings.AnyAsync())
-            {
-                await _context.SystemSettings.AddRangeAsync(
-                    new SystemSetting
-                    {
-                        BranchId = firstBranch.Id,
-                        UpdatedBy = adminUser.Id,
-                        SettingKey = "CANCEL_BOOKING_MIN_HOURS",
-                        SettingValue = "2",
-                        DataType = "INT",
-                        Description = "Số giờ tối thiểu trước giờ học được phép hủy lịch miễn phí"
-                    },
-                    new SystemSetting
-                    {
-                        BranchId = firstBranch.Id,
-                        UpdatedBy = adminUser.Id,
-                        SettingKey = "AUTO_CHECKOUT_HOURS",
-                        SettingValue = "4",
-                        DataType = "INT",
-                        Description = "Số giờ tối đa tự động check-out nếu hội viên quên quét ra"
-                    }
                 );
             }
 
@@ -412,23 +364,6 @@ public class AppDbContextInitialiser
         var firstBranch = branches[0];
         var secondBranch = branches.Count > 1 ? branches[1] : firstBranch;
         var thirdBranch = branches.Count > 2 ? branches[2] : firstBranch;
-
-        var adminUser = await _context.Users.FirstOrDefaultAsync(u => u.Role == UserRole.Admin);
-
-        // Đảm bảo có cấu hình WAITLIST_CUTOFF_HOURS = 8
-        if (!await _context.SystemSettings.AnyAsync(s => s.SettingKey == "WAITLIST_CUTOFF_HOURS"))
-        {
-            await _context.SystemSettings.AddAsync(new SystemSetting
-            {
-                BranchId = null,
-                UpdatedBy = adminUser?.Id,
-                SettingKey = "WAITLIST_CUTOFF_HOURS",
-                SettingValue = "8",
-                DataType = "INT",
-                Description = "Số giờ trước giờ học đóng danh sách chờ (Waitlist T-8h)"
-            });
-            await _context.SaveChangesAsync();
-        }
 
         // Đảm bảo member2 (minhanh@ooad.vn) có gói Standard Active để demo so sánh độ ưu tiên Waitlist (VIP > Standard)
         var member1 = await _context.Members
@@ -901,26 +836,6 @@ public class AppDbContextInitialiser
             await _context.BodyMeasurements.AddRangeAsync(m1, m2, m3);
             await _context.SaveChangesAsync();
             _logger.LogInformation("Seed 3 mốc đo chỉ số cơ thể InBody thành công.");
-        }
-
-        // 5. Seed Kế hoạch dinh dưỡng (Nutrition Plan)
-        if (!await _context.NutritionPlans.AnyAsync(p => p.MemberId == member.Id))
-        {
-            var plan = new NutritionPlan
-            {
-                MemberId = member.Id,
-                Goal = "Tăng Cơ Nạc & Giảm Mỡ (Lean Bulk 2200 kcal)",
-                DailyCalories = 2200,
-                ProteinG = 160,
-                CarbG = 235,
-                FatG = 60,
-                MealSuggestion = "• Bữa 1 (07:30): 60g Yến mạch + 1 muỗng Whey Protein + 1 quả chuối tiêu\n• Bữa 2 (11:30): 1.5 chén Cơm gạo lứt + 200g Ức gà áp chảo + 150g Bông cải xanh luộc\n• Bữa 3 (16:30 - Trước tập): 2 lát bánh mì đen + 1 thìa bơ đậu phộng + 1 quả táo\n• Bữa 4 (19:30 - Sau tập): 200g Khoai lang luộc + 200g Cá hồi / Thịt thăn bò + Đĩa salad dầu giấm",
-                DietaryNotes = "Uống đủ 2.5 - 3 lít nước mỗi ngày. Giữ giấc ngủ sâu từ 7 - 8 tiếng để cơ bắp phục hồi tối ưu.",
-                CreatedAt = nowUtc.AddDays(-10)
-            };
-            await _context.NutritionPlans.AddAsync(plan);
-            await _context.SaveChangesAsync();
-            _logger.LogInformation("Seed kế hoạch dinh dưỡng mẫu thành công.");
         }
     }
 

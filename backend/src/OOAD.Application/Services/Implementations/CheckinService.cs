@@ -1,5 +1,3 @@
-using Microsoft.EntityFrameworkCore;
-using OOAD.Application.Common.Interfaces;
 using OOAD.Application.DTOs;
 using OOAD.Application.Services.Interfaces;
 using OOAD.Domain.Entities;
@@ -25,7 +23,8 @@ public class CheckinService : ICheckinService
     private readonly IBookingRepository _bookingRepository;
     private readonly IBranchRepository _branchRepository;
     private readonly IStaffRepository _staffRepository;
-    private readonly IAppDbContext _context;
+    private readonly IFreezeRequestRepository _freezeRequestRepository;
+    private readonly IEquipmentIssueRepository _equipmentIssueRepository;
     private readonly IUnitOfWork _unitOfWork;
 
     public CheckinService(
@@ -36,7 +35,8 @@ public class CheckinService : ICheckinService
         IBookingRepository bookingRepository,
         IBranchRepository branchRepository,
         IStaffRepository staffRepository,
-        IAppDbContext context,
+        IFreezeRequestRepository freezeRequestRepository,
+        IEquipmentIssueRepository equipmentIssueRepository,
         IUnitOfWork unitOfWork)
     {
         _checkinRepository = checkinRepository;
@@ -46,7 +46,8 @@ public class CheckinService : ICheckinService
         _bookingRepository = bookingRepository;
         _branchRepository = branchRepository;
         _staffRepository = staffRepository;
-        _context = context;
+        _freezeRequestRepository = freezeRequestRepository;
+        _equipmentIssueRepository = equipmentIssueRepository;
         _unitOfWork = unitOfWork;
     }
 
@@ -340,16 +341,9 @@ public class CheckinService : ICheckinService
             take: 500,
             cancellationToken);
 
-        var pendingFreezeCount = await _context.FreezeRequests
-            .AsNoTracking()
-            .CountAsync(f => f.Status == FreezeRequestStatus.Pending, cancellationToken);
+        var pendingFreezeCount = await _freezeRequestRepository.CountPendingAsync(cancellationToken);
 
-        var openIssueCount = await _context.EquipmentIssues
-            .AsNoTracking()
-            .CountAsync(i =>
-                i.Equipment.BranchId == branch.Id &&
-                (i.Status == IssueStatus.Open || i.Status == IssueStatus.Investigating),
-                cancellationToken);
+        var openIssueCount = await _equipmentIssueRepository.CountOpenByBranchAsync(branch.Id, cancellationToken);
 
         return new StaffDashboardDto
         {

@@ -3,24 +3,23 @@ using OOAD.Domain.Enums;
 
 namespace OOAD.Domain.Interfaces;
 
-public interface ICheckinRepository : IGenericRepository<Checkin>
+public interface ICheckinRepository
 {
-    /// <summary>Lấy lượt check-in đang mở (chưa check-out) gần nhất của hội viên.</summary>
-    Task<Checkin?> GetOpenCheckinByMemberIdAsync (
+    Task<Checkin?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Checkin>> GetAllAsync(CancellationToken cancellationToken = default);
+    Task AddAsync(Checkin entity, CancellationToken cancellationToken = default);
+    void Update(Checkin entity);
+    void Delete(Checkin entity);
+
+    Task<Checkin?> GetOpenCheckinByMemberIdAsync(
         Guid memberId,
         CancellationToken cancellationToken = default);
-
-    /// <summary>Lấy chi tiết 1 lượt check-in kèm Member, User, Branch, Card, Recorder.</summary>
-    Task <Checkin?> GetByIdWithDetailsAsync(
+    Task<Checkin?> GetByIdWithDetailsAsync(
         Guid id,
         CancellationToken cancellationToken = default);
-
-    /// <summary>Lấy danh sách hội viên đang có mặt tại chi nhánh (CheckOutAt == null).</summary>
     Task<IReadOnlyList<Checkin>> GetActiveCheckinsAsync(
-        Guid? branchId = null, 
+        Guid? branchId = null,
         CancellationToken cancellationToken = default);
-
-      /// <summary>Tra cứu lịch sử check-in có lọc theo chi nhánh, hình thức, ngày, từ khóa, hoặc hội viên.</summary>
     Task<IReadOnlyList<Checkin>> GetHistoryAsync(
         Guid? branchId = null,
         Guid? memberId = null,
@@ -30,15 +29,14 @@ public interface ICheckinRepository : IGenericRepository<Checkin>
         string? search = null,
         int take = 200,
         CancellationToken cancellationToken = default);
-
-    /// <summary>Lấy tất cả lượt check-in chưa đóng để phục vụ Auto Check-out.</summary>
     Task<IReadOnlyList<Checkin>> GetAllOpenCheckinsWithBranchAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>Lấy danh sách hội viên đã check-in tại chi nhánh trong khoảng thời gian (phục vụ đối chiếu điểm danh lớp nhóm).</summary>
     Task<Dictionary<Guid, DateTime>> GetCheckedInMemberTimesOnDateAsync(
         Guid branchId,
         DateTime fromUtc,
         DateTime toUtc,
         IEnumerable<Guid> memberIds,
+        CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Checkin>> GetAllByBranchAsync(
+        Guid? branchId = null,
         CancellationToken cancellationToken = default);
 }

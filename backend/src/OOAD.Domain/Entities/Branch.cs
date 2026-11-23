@@ -2,10 +2,6 @@ using OOAD.Domain.Common;
 
 namespace OOAD.Domain.Entities;
 
-/// <summary>
-/// Thực thể Chi nhánh phòng gym (Branch).
-/// Tương thích với cả ERD (BranchName, Phone, Open_time, Close_time, Status) và BranchService hiện có.
-/// </summary>
 public class Branch : BaseEntity, IAuditableEntity
 {
     private string _name = string.Empty;
@@ -58,6 +54,4 @@ public class Branch : BaseEntity, IAuditableEntity
     public ICollection<Membership> Memberships { get; set; } = new List<Membership>();
     public ICollection<GymClass> Classes { get; set; } = new List<GymClass>();
     public ICollection<Checkin> Checkins { get; set; } = new List<Checkin>();
-    public ICollection<GymRule> GymRules { get; set; } = new List<GymRule>();
-    public ICollection<SystemSetting> SystemSettings { get; set; } = new List<SystemSetting>();
 }

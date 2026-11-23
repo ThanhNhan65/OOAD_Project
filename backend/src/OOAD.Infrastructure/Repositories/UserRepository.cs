@@ -1,15 +1,43 @@
+using Microsoft.EntityFrameworkCore;
 using OOAD.Domain.Entities;
 using OOAD.Domain.Enums;
 using OOAD.Domain.Interfaces;
 using OOAD.Infrastructure.Persistence.Context;
-using Microsoft.EntityFrameworkCore;
 
 namespace OOAD.Infrastructure.Repositories;
 
-public class UserRepository : GenericRepository<User>, IUserRepository
+public class UserRepository : IUserRepository
 {
-    public UserRepository(AppDbContext context) : base(context)
+    private readonly AppDbContext _context;
+
+    public UserRepository(AppDbContext context)
     {
+        _context = context;
+    }
+
+    public async Task<User?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        return await _context.Users.FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<User>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        return await _context.Users.AsNoTracking().ToListAsync(cancellationToken);
+    }
+
+    public async Task AddAsync(User entity, CancellationToken cancellationToken = default)
+    {
+        await _context.Users.AddAsync(entity, cancellationToken);
+    }
+
+    public void Update(User entity)
+    {
+        _context.Users.Update(entity);
+    }
+
+    public void Delete(User entity)
+    {
+        _context.Users.Remove(entity);
     }
 
     public async Task<User?> GetByEmailOrUserNameAsync(string emailOrUserName, CancellationToken cancellationToken = default)

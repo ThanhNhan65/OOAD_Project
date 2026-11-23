@@ -493,58 +493,6 @@ namespace OOAD.Infrastructure.Migrations
                     b.ToTable("Classes", (string)null);
                 });
 
-            modelBuilder.Entity("OOAD.Domain.Entities.GymRule", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid?>("BranchId")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("Branch_Id");
-
-                    b.Property<string>("Category")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<string>("Content")
-                        .IsRequired()
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2")
-                        .HasColumnName("Created_At");
-
-                    b.Property<Guid?>("CreatedBy")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("Created_By");
-
-                    b.Property<bool>("IsActive")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(true)
-                        .HasColumnName("Is_Active");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("datetime2")
-                        .HasColumnName("Updated_At");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BranchId");
-
-                    b.HasIndex("CreatedBy");
-
-                    b.ToTable("Gym_Rules", (string)null);
-                });
-
             modelBuilder.Entity("OOAD.Domain.Entities.MeasurementValue", b =>
                 {
                     b.Property<Guid>("Id")
@@ -826,70 +774,6 @@ namespace OOAD.Infrastructure.Migrations
                     b.ToTable("Notifications", (string)null);
                 });
 
-            modelBuilder.Entity("OOAD.Domain.Entities.NutritionPlan", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("ActivityLevel")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)")
-                        .HasColumnName("Activity_Level");
-
-                    b.Property<int>("CarbG")
-                        .HasColumnType("int")
-                        .HasColumnName("Carb_G");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2")
-                        .HasColumnName("Created_At");
-
-                    b.Property<int>("DailyCalories")
-                        .HasColumnType("int")
-                        .HasColumnName("Daily_Calories");
-
-                    b.Property<string>("DietaryNotes")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)")
-                        .HasColumnName("Dietary_Notes");
-
-                    b.Property<int>("FatG")
-                        .HasColumnType("int")
-                        .HasColumnName("Fat_G");
-
-                    b.Property<string>("Goal")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<string>("MealSuggestion")
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)")
-                        .HasColumnName("Meal_Suggestion");
-
-                    b.Property<Guid?>("MeasurementId")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("Measurement_Id");
-
-                    b.Property<Guid>("MemberId")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("Member_Id");
-
-                    b.Property<int>("ProteinG")
-                        .HasColumnType("int")
-                        .HasColumnName("Protein_G");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("MeasurementId");
-
-                    b.HasIndex("MemberId");
-
-                    b.ToTable("Nutrition_Plans", (string)null);
-                });
-
             modelBuilder.Entity("OOAD.Domain.Entities.Payment", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1026,55 +910,6 @@ namespace OOAD.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("Staff", (string)null);
-                });
-
-            modelBuilder.Entity("OOAD.Domain.Entities.SystemSetting", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid?>("BranchId")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("Branch_Id");
-
-                    b.Property<string>("DataType")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)")
-                        .HasColumnName("Data_Type");
-
-                    b.Property<string>("Description")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<string>("SettingKey")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)")
-                        .HasColumnName("Setting_Key");
-
-                    b.Property<string>("SettingValue")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)")
-                        .HasColumnName("Setting_Value");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("datetime2")
-                        .HasColumnName("Updated_At");
-
-                    b.Property<Guid?>("UpdatedBy")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("Updated_By");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BranchId");
-
-                    b.HasIndex("UpdatedBy");
-
-                    b.ToTable("System_Settings", (string)null);
                 });
 
             modelBuilder.Entity("OOAD.Domain.Entities.Trainer", b =>
@@ -1445,23 +1280,6 @@ namespace OOAD.Infrastructure.Migrations
                     b.Navigation("Trainer");
                 });
 
-            modelBuilder.Entity("OOAD.Domain.Entities.GymRule", b =>
-                {
-                    b.HasOne("OOAD.Domain.Entities.Branch", "Branch")
-                        .WithMany("GymRules")
-                        .HasForeignKey("BranchId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("OOAD.Domain.Entities.User", "Creator")
-                        .WithMany("CreatedGymRules")
-                        .HasForeignKey("CreatedBy")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Branch");
-
-                    b.Navigation("Creator");
-                });
-
             modelBuilder.Entity("OOAD.Domain.Entities.MeasurementValue", b =>
                 {
                     b.HasOne("OOAD.Domain.Entities.BodyMeasurement", "Measurement")
@@ -1547,24 +1365,6 @@ namespace OOAD.Infrastructure.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("OOAD.Domain.Entities.NutritionPlan", b =>
-                {
-                    b.HasOne("OOAD.Domain.Entities.BodyMeasurement", "Measurement")
-                        .WithMany("NutritionPlans")
-                        .HasForeignKey("MeasurementId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("OOAD.Domain.Entities.Member", "Member")
-                        .WithMany("NutritionPlans")
-                        .HasForeignKey("MemberId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Measurement");
-
-                    b.Navigation("Member");
-                });
-
             modelBuilder.Entity("OOAD.Domain.Entities.Payment", b =>
                 {
                     b.HasOne("OOAD.Domain.Entities.Membership", "Membership")
@@ -1646,23 +1446,6 @@ namespace OOAD.Infrastructure.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("OOAD.Domain.Entities.SystemSetting", b =>
-                {
-                    b.HasOne("OOAD.Domain.Entities.Branch", "Branch")
-                        .WithMany("SystemSettings")
-                        .HasForeignKey("BranchId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("OOAD.Domain.Entities.User", "Updater")
-                        .WithMany("UpdatedSystemSettings")
-                        .HasForeignKey("UpdatedBy")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Branch");
-
-                    b.Navigation("Updater");
-                });
-
             modelBuilder.Entity("OOAD.Domain.Entities.Trainer", b =>
                 {
                     b.HasOne("OOAD.Domain.Entities.Branch", "Branch")
@@ -1714,8 +1497,6 @@ namespace OOAD.Infrastructure.Migrations
 
             modelBuilder.Entity("OOAD.Domain.Entities.BodyMeasurement", b =>
                 {
-                    b.Navigation("NutritionPlans");
-
                     b.Navigation("Values");
                 });
 
@@ -1734,15 +1515,11 @@ namespace OOAD.Infrastructure.Migrations
 
                     b.Navigation("Equipments");
 
-                    b.Navigation("GymRules");
-
                     b.Navigation("Memberships");
 
                     b.Navigation("PlanBranches");
 
                     b.Navigation("Staffs");
-
-                    b.Navigation("SystemSettings");
 
                     b.Navigation("Trainers");
                 });
@@ -1782,8 +1559,6 @@ namespace OOAD.Infrastructure.Migrations
                     b.Navigation("MemberCards");
 
                     b.Navigation("Memberships");
-
-                    b.Navigation("NutritionPlans");
 
                     b.Navigation("ReportedIssues");
 
@@ -1849,8 +1624,6 @@ namespace OOAD.Infrastructure.Migrations
 
             modelBuilder.Entity("OOAD.Domain.Entities.User", b =>
                 {
-                    b.Navigation("CreatedGymRules");
-
                     b.Navigation("Member");
 
                     b.Navigation("Notifications");
@@ -1858,8 +1631,6 @@ namespace OOAD.Infrastructure.Migrations
                     b.Navigation("Staff");
 
                     b.Navigation("Trainer");
-
-                    b.Navigation("UpdatedSystemSettings");
                 });
 #pragma warning restore 612, 618
         }

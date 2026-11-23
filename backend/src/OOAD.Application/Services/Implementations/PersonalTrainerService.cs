@@ -1,36 +1,45 @@
-using Microsoft.EntityFrameworkCore;
-using OOAD.Application.Common.Interfaces;
 using OOAD.Application.DTOs;
 using OOAD.Application.Services.Interfaces;
 using OOAD.Domain.Entities;
 using OOAD.Domain.Enums;
 using OOAD.Domain.Exceptions;
+using OOAD.Domain.Interfaces;
 
 namespace OOAD.Application.Services.Implementations;
 
 public class PersonalTrainerService : IPersonalTrainerService
 {
-    private readonly IAppDbContext _context;
+    private readonly IMemberRepository _memberRepository;
+    private readonly ITrainerRepository _trainerRepository;
+    private readonly ITrainerAvailabilityRepository _availabilityRepository;
+    private readonly IMembershipRepository _membershipRepository;
+    private readonly IBookingRepository _bookingRepository;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public PersonalTrainerService(IAppDbContext context)
+    public PersonalTrainerService(
+        IMemberRepository memberRepository,
+        ITrainerRepository trainerRepository,
+        ITrainerAvailabilityRepository availabilityRepository,
+        IMembershipRepository membershipRepository,
+        IBookingRepository bookingRepository,
+        IUnitOfWork unitOfWork)
     {
-        _context = context;
+        _memberRepository = memberRepository;
+        _trainerRepository = trainerRepository;
+        _availabilityRepository = availabilityRepository;
+        _membershipRepository = membershipRepository;
+        _bookingRepository = bookingRepository;
+        _unitOfWork = unitOfWork;
     }
 
     public async Task<PtBalanceDto> GetPtBalanceAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var member = await _context.Members
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken);
-
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, cancellationToken);
         if (member == null)
             throw new NotFoundException("Không tìm thấy thông tin hội viên.");
 
         var now = DateTime.UtcNow;
-        var activeMemberships = await _context.Memberships
-            .Include(m => m.Plan)
-            .Where(m => m.MemberId == member.Id && m.Status == MembershipStatus.Active && m.EndDate >= now)
-            .OrderByDescending(m => m.StartDate)
-            .ToListAsync(cancellationToken);
+        var activeMemberships = await _membershipRepository.GetActiveByMemberIdWithPlanAsync(member.Id, now, cancellationToken);
 
         int freeSessions = 0;
         int packageSessions = 0;
@@ -67,18 +76,11 @@ public class PersonalTrainerService : IPersonalTrainerService
 
     public async Task<PtBookingDto> BookPtSessionAsync(Guid userId, BookPtRequest request, CancellationToken cancellationToken = default)
     {
-        var member = await _context.Members
-            .Include(m => m.User)
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken);
-
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, cancellationToken);
         if (member == null)
             throw new NotFoundException("Không tìm thấy thông tin hội viên.");
 
-        var availability = await _context.TrainerAvailabilities
-            .Include(a => a.Trainer).ThenInclude(t => t.User)
-            .Include(a => a.Trainer).ThenInclude(t => t.Branch)
-            .FirstOrDefaultAsync(a => a.Id == request.AvailabilityId, cancellationToken);
-
+        var availability = await _availabilityRepository.GetByIdWithTrainerDetailsAsync(request.AvailabilityId, cancellationToken);
         if (availability == null)
             throw new NotFoundException("Khung giờ rảnh không tồn tại.");
 
@@ -88,26 +90,23 @@ public class PersonalTrainerService : IPersonalTrainerService
         if (availability.StartAt <= DateTime.UtcNow)
             throw new ValidationException("Không thể đặt khung giờ đã trôi qua.");
 
-        // Tìm gói hội viên còn buổi PT
+        // Tìm gói hội viên còn buổi PT (ưu tiên buổi tặng trước, sau đó tới gói PT)
         var now = DateTime.UtcNow;
-        var membership = await _context.Memberships
-            .Include(m => m.Plan)
-            .Where(m => m.MemberId == member.Id && m.Status == MembershipStatus.Active && m.EndDate >= now && m.RemainingSessions > 0)
-            .OrderBy(m => m.Plan.PlanType == "PT" ? 1 : 0) // Dùng buổi tặng trước, sau đó tới gói PT
-            .FirstOrDefaultAsync(cancellationToken);
+        var activeMemberships = await _membershipRepository.GetActiveByMemberIdWithPlanAsync(member.Id, now, cancellationToken);
+        var membership = activeMemberships
+            .Where(m => m.RemainingSessions > 0)
+            .OrderBy(m => m.Plan.PlanType == "PT" ? 1 : 0)
+            .FirstOrDefault();
 
         if (membership == null)
             throw new ValidationException("Bạn không còn buổi tập PT nào khả dụng. Vui lòng mua thêm gói PT hoặc gia hạn gói VIP.");
 
         // Kiểm tra hội viên có trùng lịch PT khác vào khung giờ này không
-        var hasConflict = await _context.Bookings
-            .Include(b => b.Availability)
-            .AnyAsync(b => b.MemberId == member.Id
-                        && b.Status != BookingStatus.Cancelled
-                        && b.Availability != null
-                        && b.Availability.StartAt < availability.EndAt
-                        && b.Availability.EndAt > availability.StartAt,
-                      cancellationToken);
+        var hasConflict = await _bookingRepository.HasPtTimeConflictAsync(
+            member.Id,
+            availability.StartAt,
+            availability.EndAt,
+            cancellationToken);
 
         if (hasConflict)
             throw new ValidationException("Bạn đã có một lịch hẹn PT khác trùng vào khung giờ này.");
@@ -126,8 +125,8 @@ public class PersonalTrainerService : IPersonalTrainerService
             CreatedAt = DateTime.UtcNow
         };
 
-        _context.Bookings.Add(booking);
-        await _context.SaveChangesAsync(cancellationToken);
+        await _bookingRepository.AddAsync(booking, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return new PtBookingDto
         {
@@ -156,21 +155,11 @@ public class PersonalTrainerService : IPersonalTrainerService
 
     public async Task<IEnumerable<PtBookingDto>> GetMyPtBookingsAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var member = await _context.Members
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken);
-
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, cancellationToken);
         if (member == null)
             return Enumerable.Empty<PtBookingDto>();
 
-        var bookings = await _context.Bookings
-            .Include(b => b.Availability).ThenInclude(a => a!.Trainer).ThenInclude(t => t.User)
-            .Include(b => b.Availability).ThenInclude(a => a!.Trainer).ThenInclude(t => t.Branch)
-            .Include(b => b.Membership).ThenInclude(ms => ms.Plan)
-            .Include(b => b.Review)
-            .Where(b => b.MemberId == member.Id && b.Type == BookingType.PersonalTrainer && b.Availability != null)
-            .OrderByDescending(b => b.Availability!.StartAt)
-            .ToListAsync(cancellationToken);
-
+        var bookings = await _bookingRepository.GetPtBookingsByMemberIdAsync(member.Id, cancellationToken);
         var now = DateTime.UtcNow;
 
         return bookings.Select(b =>
@@ -205,17 +194,11 @@ public class PersonalTrainerService : IPersonalTrainerService
 
     public async Task CancelPtBookingAsync(Guid userId, Guid bookingId, string? reason, CancellationToken cancellationToken = default)
     {
-        var member = await _context.Members
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken);
-
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, cancellationToken);
         if (member == null)
             throw new NotFoundException("Không tìm thấy thông tin hội viên.");
 
-        var booking = await _context.Bookings
-            .Include(b => b.Availability)
-            .Include(b => b.Membership)
-            .FirstOrDefaultAsync(b => b.Id == bookingId && b.MemberId == member.Id, cancellationToken);
-
+        var booking = await _bookingRepository.GetByIdAndMemberIdWithPtDetailsAsync(bookingId, member.Id, cancellationToken);
         if (booking == null)
             throw new NotFoundException("Không tìm thấy thông tin đặt lịch PT.");
 
@@ -243,24 +226,21 @@ public class PersonalTrainerService : IPersonalTrainerService
             booking.Membership.RemainingSessions += 1;
         }
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<IEnumerable<TrainerPtRequestItemDto>> GetTrainerPtRequestsAsync(Guid trainerUserId, CancellationToken cancellationToken = default)
     {
-        var trainer = await _context.Trainers
-            .FirstOrDefaultAsync(t => t.UserId == trainerUserId, cancellationToken);
+        var trainer = await _trainerRepository.GetByUserIdWithDetailsAsync(
+            trainerUserId,
+            includeAvailabilities: false,
+            asNoTracking: true,
+            cancellationToken);
 
         if (trainer == null)
             throw new NotFoundException("Không tìm thấy hồ sơ HLV.");
 
-        var bookings = await _context.Bookings
-            .Include(b => b.Member).ThenInclude(m => m.User)
-            .Include(b => b.Availability)
-            .Include(b => b.Membership).ThenInclude(ms => ms.Plan)
-            .Where(b => b.Availability != null && b.Availability.TrainerId == trainer.Id && b.Type == BookingType.PersonalTrainer)
-            .OrderByDescending(b => b.Availability!.StartAt)
-            .ToListAsync(cancellationToken);
+        var bookings = await _bookingRepository.GetPtBookingsByTrainerIdAsync(trainer.Id, cancellationToken: cancellationToken);
 
         return bookings.Select(b =>
         {
@@ -285,17 +265,11 @@ public class PersonalTrainerService : IPersonalTrainerService
 
     public async Task RespondPtRequestAsync(Guid trainerUserId, Guid bookingId, bool accept, string? reason, CancellationToken cancellationToken = default)
     {
-        var trainer = await _context.Trainers
-            .FirstOrDefaultAsync(t => t.UserId == trainerUserId, cancellationToken);
-
+        var trainer = await _trainerRepository.GetByUserIdAsync(trainerUserId, cancellationToken);
         if (trainer == null)
             throw new NotFoundException("Không tìm thấy hồ sơ HLV.");
 
-        var booking = await _context.Bookings
-            .Include(b => b.Availability)
-            .Include(b => b.Membership)
-            .FirstOrDefaultAsync(b => b.Id == bookingId && b.Availability != null && b.Availability.TrainerId == trainer.Id, cancellationToken);
-
+        var booking = await _bookingRepository.GetByIdAndTrainerIdWithPtDetailsAsync(bookingId, trainer.Id, cancellationToken);
         if (booking == null)
             throw new NotFoundException("Không tìm thấy yêu cầu đặt lịch PT.");
 
@@ -320,41 +294,30 @@ public class PersonalTrainerService : IPersonalTrainerService
             }
         }
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
     public async Task CompletePtSessionAsync(Guid trainerUserId, Guid bookingId, bool attended, CancellationToken cancellationToken = default)
     {
-        var trainer = await _context.Trainers
-            .FirstOrDefaultAsync(t => t.UserId == trainerUserId, cancellationToken);
-
+        var trainer = await _trainerRepository.GetByUserIdAsync(trainerUserId, cancellationToken);
         if (trainer == null)
             throw new NotFoundException("Không tìm thấy hồ sơ HLV.");
 
-        var booking = await _context.Bookings
-            .Include(b => b.Availability)
-            .FirstOrDefaultAsync(b => b.Id == bookingId && b.Availability != null && b.Availability.TrainerId == trainer.Id, cancellationToken);
-
+        var booking = await _bookingRepository.GetByIdAndTrainerIdWithPtDetailsAsync(bookingId, trainer.Id, cancellationToken);
         if (booking == null)
             throw new NotFoundException("Không tìm thấy buổi tập PT.");
 
         booking.Status = attended ? BookingStatus.Attended : BookingStatus.NoShow;
-        await _context.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
     public async Task CancelPtByTrainerAsync(Guid trainerUserId, Guid bookingId, string reason, CancellationToken cancellationToken = default)
     {
-        var trainer = await _context.Trainers
-            .FirstOrDefaultAsync(t => t.UserId == trainerUserId, cancellationToken);
-
+        var trainer = await _trainerRepository.GetByUserIdAsync(trainerUserId, cancellationToken);
         if (trainer == null)
             throw new NotFoundException("Không tìm thấy hồ sơ HLV.");
 
-        var booking = await _context.Bookings
-            .Include(b => b.Availability)
-            .Include(b => b.Membership)
-            .FirstOrDefaultAsync(b => b.Id == bookingId && b.Availability != null && b.Availability.TrainerId == trainer.Id, cancellationToken);
-
+        var booking = await _bookingRepository.GetByIdAndTrainerIdWithPtDetailsAsync(bookingId, trainer.Id, cancellationToken);
         if (booking == null)
             throw new NotFoundException("Không tìm thấy buổi tập PT.");
 
@@ -371,6 +334,6 @@ public class PersonalTrainerService : IPersonalTrainerService
             booking.Membership.RemainingSessions += 1;
         }
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 }

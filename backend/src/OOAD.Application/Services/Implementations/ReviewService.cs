@@ -1,65 +1,56 @@
-using Microsoft.EntityFrameworkCore;
-using OOAD.Application.Common.Interfaces;
 using OOAD.Application.DTOs;
 using OOAD.Application.Services.Interfaces;
 using OOAD.Domain.Entities;
 using OOAD.Domain.Exceptions;
+using OOAD.Domain.Interfaces;
 
 namespace OOAD.Application.Services.Implementations;
 
 public class ReviewService : IReviewService
 {
-    private readonly IAppDbContext _context;
+    private readonly IReviewRepository _reviewRepository;
+    private readonly ITrainerRepository _trainerRepository;
+    private readonly IMemberRepository _memberRepository;
+    private readonly IBookingRepository _bookingRepository;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public ReviewService(IAppDbContext context)
+    public ReviewService(
+        IReviewRepository reviewRepository,
+        ITrainerRepository trainerRepository,
+        IMemberRepository memberRepository,
+        IBookingRepository bookingRepository,
+        IUnitOfWork unitOfWork)
     {
-        _context = context;
+        _reviewRepository = reviewRepository;
+        _trainerRepository = trainerRepository;
+        _memberRepository = memberRepository;
+        _bookingRepository = bookingRepository;
+        _unitOfWork = unitOfWork;
     }
 
     public async Task<TrainerReviewSummaryDto> GetTrainerReviewsAsync(Guid trainerId, CancellationToken cancellationToken = default)
     {
-        var trainer = await _context.Trainers
-            .Include(t => t.User)
-            .FirstOrDefaultAsync(t => t.Id == trainerId, cancellationToken);
-
+        var trainer = await _trainerRepository.GetWithDetailsAsync(trainerId, cancellationToken);
         if (trainer == null)
             throw new NotFoundException("Không tìm thấy Huấn luyện viên.");
 
-        var reviews = await _context.Reviews
-            .Include(r => r.Member).ThenInclude(m => m.User)
-            .Include(r => r.GymClass)
-            .Where(r => r.TrainerId == trainer.Id)
-            .OrderByDescending(r => r.CreatedAt)
-            .ToListAsync(cancellationToken);
-
+        var reviews = await _reviewRepository.GetByTrainerIdWithDetailsAsync(trainer.Id, cancellationToken);
         return BuildSummary(trainer, reviews);
     }
 
     public async Task<TrainerReviewSummaryDto> GetMyTrainerReviewsAsync(Guid trainerUserId, CancellationToken cancellationToken = default)
     {
-        var trainer = await _context.Trainers
-            .Include(t => t.User)
-            .FirstOrDefaultAsync(t => t.UserId == trainerUserId, cancellationToken);
-
+        var trainer = await _trainerRepository.GetByUserIdAsync(trainerUserId, cancellationToken);
         if (trainer == null)
             throw new NotFoundException("Không tìm thấy hồ sơ HLV.");
 
-        var reviews = await _context.Reviews
-            .Include(r => r.Member).ThenInclude(m => m.User)
-            .Include(r => r.GymClass)
-            .Where(r => r.TrainerId == trainer.Id)
-            .OrderByDescending(r => r.CreatedAt)
-            .ToListAsync(cancellationToken);
-
+        var reviews = await _reviewRepository.GetByTrainerIdWithDetailsAsync(trainer.Id, cancellationToken);
         return BuildSummary(trainer, reviews);
     }
 
     public async Task<ReviewDto> SubmitReviewAsync(Guid userId, CreateReviewRequest request, CancellationToken cancellationToken = default)
     {
-        var member = await _context.Members
-            .Include(m => m.User)
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken);
-
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, cancellationToken);
         if (member == null)
             throw new NotFoundException("Không tìm thấy thông tin hội viên.");
 
@@ -71,12 +62,8 @@ public class ReviewService : IReviewService
 
         if (request.BookingId.HasValue)
         {
-            var booking = await _context.Bookings
-                .Include(b => b.Availability)
-                .Include(b => b.ClassSession)
-                .FirstOrDefaultAsync(b => b.Id == request.BookingId.Value && b.MemberId == member.Id, cancellationToken);
-
-            if (booking != null)
+            var booking = await _bookingRepository.GetByIdWithDetailsAsync(request.BookingId.Value, cancellationToken);
+            if (booking != null && booking.MemberId == member.Id)
             {
                 if (booking.Availability != null)
                 {
@@ -101,13 +88,13 @@ public class ReviewService : IReviewService
             CreatedAt = DateTime.UtcNow
         };
 
-        _context.Reviews.Add(review);
-        await _context.SaveChangesAsync(cancellationToken);
+        await _reviewRepository.AddAsync(review, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         string? trainerName = null;
         if (trainerId.HasValue)
         {
-            var tr = await _context.Trainers.Include(t => t.User).FirstOrDefaultAsync(t => t.Id == trainerId.Value, cancellationToken);
+            var tr = await _trainerRepository.GetWithDetailsAsync(trainerId.Value, cancellationToken);
             trainerName = tr?.User?.FullName;
         }
 
@@ -127,7 +114,7 @@ public class ReviewService : IReviewService
         };
     }
 
-    private static TrainerReviewSummaryDto BuildSummary(Trainer trainer, List<Review> reviews)
+    private static TrainerReviewSummaryDto BuildSummary(Trainer trainer, IReadOnlyList<Review> reviews)
     {
         var dist = new Dictionary<int, int>
         {

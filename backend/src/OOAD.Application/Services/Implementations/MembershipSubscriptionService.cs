@@ -1,11 +1,10 @@
-using Microsoft.EntityFrameworkCore;
-using OOAD.Application.Common.Interfaces;
 using OOAD.Application.Common.Options;
 using OOAD.Application.DTOs;
 using OOAD.Application.Services.Interfaces;
 using OOAD.Domain.Entities;
 using OOAD.Domain.Enums;
 using OOAD.Domain.Exceptions;
+using OOAD.Domain.Interfaces;
 
 namespace OOAD.Application.Services.Implementations;
 
@@ -15,12 +14,47 @@ namespace OOAD.Application.Services.Implementations;
 /// </summary>
 public class MembershipSubscriptionService : IMembershipSubscriptionService
 {
-    private readonly IAppDbContext _context;
+    private readonly IMembershipPlanRepository _membershipPlanRepository;
+    private readonly IMembershipRepository _membershipRepository;
+    private readonly IPaymentRepository _paymentRepository;
+    private readonly IFreezeRequestRepository _freezeRequestRepository;
+    private readonly IMemberRepository _memberRepository;
+    private readonly IStaffRepository _staffRepository;
+    private readonly IBranchRepository _branchRepository;
+    private readonly IBookingRepository _bookingRepository;
+    private readonly IWaitlistEntryRepository _waitlistEntryRepository;
+    private readonly IClassSessionRepository _classSessionRepository;
+    private readonly INotificationRepository _notificationRepository;
+    private readonly IUnitOfWork _unitOfWork;
     private readonly BusinessRuleOptions _ruleOptions;
 
-    public MembershipSubscriptionService(IAppDbContext context, BusinessRuleOptions ruleOptions)
+    public MembershipSubscriptionService(
+        IMembershipPlanRepository membershipPlanRepository,
+        IMembershipRepository membershipRepository,
+        IPaymentRepository paymentRepository,
+        IFreezeRequestRepository freezeRequestRepository,
+        IMemberRepository memberRepository,
+        IStaffRepository staffRepository,
+        IBranchRepository branchRepository,
+        IBookingRepository bookingRepository,
+        IWaitlistEntryRepository waitlistEntryRepository,
+        IClassSessionRepository classSessionRepository,
+        INotificationRepository notificationRepository,
+        IUnitOfWork unitOfWork,
+        BusinessRuleOptions ruleOptions)
     {
-        _context = context;
+        _membershipPlanRepository = membershipPlanRepository;
+        _membershipRepository = membershipRepository;
+        _paymentRepository = paymentRepository;
+        _freezeRequestRepository = freezeRequestRepository;
+        _memberRepository = memberRepository;
+        _staffRepository = staffRepository;
+        _branchRepository = branchRepository;
+        _bookingRepository = bookingRepository;
+        _waitlistEntryRepository = waitlistEntryRepository;
+        _classSessionRepository = classSessionRepository;
+        _notificationRepository = notificationRepository;
+        _unitOfWork = unitOfWork;
         _ruleOptions = ruleOptions;
     }
 
@@ -35,33 +69,13 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         string? planType = null,
         CancellationToken cancellationToken = default)
     {
-        var query = _context.MembershipPlans
-            .AsNoTracking()
-            .Include(p => p.PlanBranches).ThenInclude(pb => pb.Branch)
-            .AsQueryable();
-
-        if (!string.IsNullOrWhiteSpace(planType) && !planType.Equals("all", StringComparison.OrdinalIgnoreCase))
-        {
-            var normalizedType = planType.Trim().ToUpperInvariant();
-            query = query.Where(p => p.PlanType.ToUpper() == normalizedType);
-        }
-
-        var plans = await query
-            .OrderBy(p => p.PlanType)
-            .ThenBy(p => p.PriorityLevel)
-            .ThenBy(p => p.Price)
-            .ToListAsync(cancellationToken);
-
+        var plans = await _membershipPlanRepository.GetAllWithBranchesAsync(planType, cancellationToken);
         return plans.Select(MapPlanDto).ToList();
     }
 
     public async Task<MembershipPlanDto?> GetPlanByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        var plan = await _context.MembershipPlans
-            .AsNoTracking()
-            .Include(p => p.PlanBranches).ThenInclude(pb => pb.Branch)
-            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
-
+        var plan = await _membershipPlanRepository.GetByIdWithBranchesAsync(id, asNoTracking: true, cancellationToken);
         return plan == null ? null : MapPlanDto(plan);
     }
 
@@ -99,13 +113,11 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
             }
         }
 
-        _context.MembershipPlans.Add(plan);
-        await _context.SaveChangesAsync(cancellationToken);
+        await _membershipPlanRepository.AddAsync(plan, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var saved = await _context.MembershipPlans
-            .AsNoTracking()
-            .Include(p => p.PlanBranches).ThenInclude(pb => pb.Branch)
-            .FirstAsync(p => p.Id == plan.Id, cancellationToken);
+        var saved = await _membershipPlanRepository.GetByIdWithBranchesAsync(plan.Id, asNoTracking: true, cancellationToken)
+            ?? plan;
 
         return MapPlanDto(saved);
     }
@@ -117,9 +129,7 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
     {
         ValidatePlanRequest(request);
 
-        var plan = await _context.MembershipPlans
-            .Include(p => p.PlanBranches)
-            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
+        var plan = await _membershipPlanRepository.GetByIdWithBranchesAsync(id, asNoTracking: false, cancellationToken)
             ?? throw new NotFoundException($"Không tìm thấy gói tập với mã: {id}");
 
         var normalizedType = NormalizePlanType(request.PlanType);
@@ -137,7 +147,7 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         // Đồng bộ lại PlanBranches
         if (plan.PlanBranches.Count > 0)
         {
-            _context.PlanBranches.RemoveRange(plan.PlanBranches);
+            _membershipPlanRepository.RemovePlanBranches(plan.PlanBranches);
         }
 
         if (!request.IsAllBranches)
@@ -145,40 +155,35 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
             var validBranchIds = await ResolveValidBranchIdsAsync(request.BranchIds, cancellationToken);
             foreach (var bid in validBranchIds)
             {
-                _context.PlanBranches.Add(new PlanBranch
+                await _membershipPlanRepository.AddPlanBranchAsync(new PlanBranch
                 {
                     PlanId = plan.Id,
                     BranchId = bid
-                });
+                }, cancellationToken);
             }
         }
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var saved = await _context.MembershipPlans
-            .AsNoTracking()
-            .Include(p => p.PlanBranches).ThenInclude(pb => pb.Branch)
-            .FirstAsync(p => p.Id == plan.Id, cancellationToken);
+        var saved = await _membershipPlanRepository.GetByIdWithBranchesAsync(plan.Id, asNoTracking: true, cancellationToken)
+            ?? plan;
 
         return MapPlanDto(saved);
     }
 
     public async Task DeletePlanAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        var plan = await _context.MembershipPlans
-            .Include(p => p.Memberships)
-            .Include(p => p.PlanBranches)
-            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
+        var plan = await _membershipPlanRepository.GetByIdWithMembershipsAndBranchesAsync(id, cancellationToken)
             ?? throw new NotFoundException($"Không tìm thấy gói tập với mã: {id}");
 
         if (plan.Memberships.Count > 0)
             throw new ValidationException($"Không thể xóa gói '{plan.Name}' vì đã có hội viên đăng ký sử dụng.");
 
         if (plan.PlanBranches.Count > 0)
-            _context.PlanBranches.RemoveRange(plan.PlanBranches);
+            _membershipPlanRepository.RemovePlanBranches(plan.PlanBranches);
 
-        _context.MembershipPlans.Remove(plan);
-        await _context.SaveChangesAsync(cancellationToken);
+        _membershipPlanRepository.Delete(plan);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
     // =========================================================================
@@ -189,23 +194,10 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         Guid userId,
         CancellationToken cancellationToken = default)
     {
-        var member = await _context.Members
-            .AsNoTracking()
-            .Include(m => m.User)
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken);
-
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, cancellationToken);
         if (member == null) return Array.Empty<MembershipDto>();
 
-        var memberships = await _context.Memberships
-            .AsNoTracking()
-            .Include(m => m.Plan).ThenInclude(p => p.PlanBranches)
-            .Include(m => m.Branch)
-            .Include(m => m.FreezeRequests)
-            .Include(m => m.Payments)
-            .Where(m => m.MemberId == member.Id)
-            .OrderByDescending(m => m.StartDate)
-            .ToListAsync(cancellationToken);
-
+        var memberships = await _membershipRepository.GetByMemberIdFullDetailsAsync(member.Id, cancellationToken);
         return memberships.Select(m => MapMembershipDto(m, member.User.FullName)).ToList();
     }
 
@@ -214,33 +206,21 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         PurchaseMembershipRequest request,
         CancellationToken cancellationToken = default)
     {
-        var member = await _context.Members
-            .Include(m => m.User)
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken)
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, cancellationToken)
             ?? throw new NotFoundException("Không tìm thấy hồ sơ hội viên cho tài khoản hiện tại.");
 
-        var plan = await _context.MembershipPlans
-            .Include(p => p.PlanBranches).ThenInclude(pb => pb.Branch)
-            .FirstOrDefaultAsync(p => p.Id == request.PlanId, cancellationToken)
+        var plan = await _membershipPlanRepository.GetByIdWithBranchesAsync(request.PlanId, asNoTracking: true, cancellationToken)
             ?? throw new NotFoundException("Không tìm thấy gói tập đã chọn.");
 
         var branch = await ResolvePurchaseBranchAsync(plan, request.BranchId, cancellationToken);
         var todayVn = SchedulingHelpers.ToVietnamDate(DateTime.UtcNow);
         var nowUtc = DateTime.UtcNow;
 
-        var memberMemberships = await _context.Memberships
-            .Include(m => m.Plan)
-            .Where(m => m.MemberId == member.Id)
-            .OrderByDescending(m => m.EndDate)
-            .ToListAsync(cancellationToken);
-
-        var latestValidGymMembership = memberMemberships
-            .Where(m => m.Plan != null &&
-                        m.Plan.PlanType.Equals("MEMBERSHIP", StringComparison.OrdinalIgnoreCase) &&
-                        (m.Status == MembershipStatus.Active || m.Status == MembershipStatus.Frozen) &&
-                        m.EndDate.Date >= todayVn)
-            .OrderByDescending(m => m.EndDate)
-            .FirstOrDefault();
+        var latestValidGymMembership = await _membershipRepository.GetLatestValidGymMembershipAsync(
+            member.Id,
+            todayVn,
+            excludeMembershipId: null,
+            cancellationToken);
 
         DateTime startDate;
         DateTime endDate;
@@ -293,23 +273,23 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
             PaidAt = request.SimulateSuccess ? nowUtc : null
         };
 
-        _context.Memberships.Add(membership);
-        _context.Payments.Add(payment);
+        await _membershipRepository.AddAsync(membership, cancellationToken);
+        await _paymentRepository.AddAsync(payment, cancellationToken);
 
         if (request.SimulateSuccess)
         {
             var isPt = plan.PlanType.Equals("PT", StringComparison.OrdinalIgnoreCase);
             var actionText = isPt ? "Mua gói PT" : renewedFromId.HasValue ? "Gia hạn gói hội viên" : "Đăng ký gói hội viên";
-            _context.Notifications.Add(SchedulingHelpers.BuildNotification(
+            await _notificationRepository.AddAsync(SchedulingHelpers.BuildNotification(
                 member.UserId,
                 "PAYMENT_SUCCESS",
                 $"{actionText} thành công",
                 $"Gói {plan.Name} đã được kích hoạt đến {endDate:dd/MM/yyyy} tại {branch?.Name ?? "toàn hệ thống"}.",
                 "Membership",
-                membership.Id));
+                membership.Id), cancellationToken);
         }
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         membership.Plan = plan;
         membership.Branch = branch;
@@ -324,17 +304,10 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         RetryPaymentRequest request,
         CancellationToken cancellationToken = default)
     {
-        var member = await _context.Members
-            .Include(m => m.User)
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken)
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, cancellationToken)
             ?? throw new NotFoundException("Không tìm thấy hồ sơ hội viên.");
 
-        var membership = await _context.Memberships
-            .Include(m => m.Plan).ThenInclude(p => p.PlanBranches).ThenInclude(pb => pb.Branch)
-            .Include(m => m.Branch)
-            .Include(m => m.FreezeRequests)
-            .Include(m => m.Payments)
-            .FirstOrDefaultAsync(m => m.Id == membershipId && m.MemberId == member.Id, cancellationToken)
+        var membership = await _membershipRepository.GetByIdAndMemberIdWithDetailsAsync(membershipId, member.Id, cancellationToken)
             ?? throw new NotFoundException("Không tìm thấy gói đăng ký cần thanh toán lại.");
 
         if (membership.Status != MembershipStatus.Pending)
@@ -355,15 +328,11 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
 
         if (request.SimulateSuccess)
         {
-            var latestValidGymMembership = await _context.Memberships
-                .Include(m => m.Plan)
-                .Where(m => m.MemberId == member.Id &&
-                            m.Id != membership.Id &&
-                            m.Plan.PlanType == "MEMBERSHIP" &&
-                            (m.Status == MembershipStatus.Active || m.Status == MembershipStatus.Frozen) &&
-                            m.EndDate.Date >= todayVn)
-                .OrderByDescending(m => m.EndDate)
-                .FirstOrDefaultAsync(cancellationToken);
+            var latestValidGymMembership = await _membershipRepository.GetLatestValidGymMembershipAsync(
+                member.Id,
+                todayVn,
+                excludeMembershipId: membership.Id,
+                cancellationToken);
 
             DateTime startDate;
             DateTime endDate;
@@ -396,20 +365,20 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
             PaidAt = request.SimulateSuccess ? nowUtc : null
         };
 
-        _context.Payments.Add(payment);
+        await _paymentRepository.AddAsync(payment, cancellationToken);
 
         if (request.SimulateSuccess)
         {
-            _context.Notifications.Add(SchedulingHelpers.BuildNotification(
+            await _notificationRepository.AddAsync(SchedulingHelpers.BuildNotification(
                 member.UserId,
                 "PAYMENT_SUCCESS",
                 "Thanh toán gói tập thành công",
                 $"Gói {membership.Plan.Name} đã được kích hoạt đến {membership.EndDate:dd/MM/yyyy}.",
                 "Membership",
-                membership.Id));
+                membership.Id), cancellationToken);
         }
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         payment.Membership = membership;
         return (MapMembershipDto(membership, member.User.FullName), MapPaymentDto(payment, member.User.FullName));
@@ -419,21 +388,10 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         Guid userId,
         CancellationToken cancellationToken = default)
     {
-        var member = await _context.Members
-            .AsNoTracking()
-            .Include(m => m.User)
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken);
-
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, cancellationToken);
         if (member == null) return Array.Empty<PaymentDto>();
 
-        var payments = await _context.Payments
-            .AsNoTracking()
-            .Include(p => p.Membership).ThenInclude(m => m.Plan)
-            .Include(p => p.Membership).ThenInclude(m => m.Branch)
-            .Where(p => p.Membership.MemberId == member.Id)
-            .OrderByDescending(p => p.CreatedAt)
-            .ToListAsync(cancellationToken);
-
+        var payments = await _paymentRepository.GetByMemberIdWithDetailsAsync(member.Id, cancellationToken);
         return payments.Select(p => MapPaymentDto(p, member.User.FullName)).ToList();
     }
 
@@ -441,21 +399,7 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         Guid? branchId = null,
         CancellationToken cancellationToken = default)
     {
-        var query = _context.Payments
-            .AsNoTracking()
-            .Include(p => p.Membership).ThenInclude(m => m.Plan)
-            .Include(p => p.Membership).ThenInclude(m => m.Branch)
-            .Include(p => p.Membership).ThenInclude(m => m.Member).ThenInclude(mb => mb.User)
-            .AsQueryable();
-
-        if (branchId.HasValue && branchId.Value != Guid.Empty)
-            query = query.Where(p => p.Membership.BranchId == branchId.Value);
-
-        var payments = await query
-            .OrderByDescending(p => p.CreatedAt)
-            .Take(300)
-            .ToListAsync(cancellationToken);
-
+        var payments = await _paymentRepository.GetAllWithDetailsAsync(branchId, take: 300, cancellationToken);
         return payments.Select(p => MapPaymentDto(p, p.Membership.Member?.User?.FullName ?? "Hội viên")).ToList();
     }
 
@@ -467,22 +411,10 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         Guid userId,
         CancellationToken cancellationToken = default)
     {
-        var member = await _context.Members
-            .AsNoTracking()
-            .Include(m => m.User)
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken);
-
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, cancellationToken);
         if (member == null) return Array.Empty<FreezeRequestDto>();
 
-        var list = await _context.FreezeRequests
-            .AsNoTracking()
-            .Include(f => f.Membership).ThenInclude(m => m.Plan)
-            .Include(f => f.Membership).ThenInclude(m => m.FreezeRequests)
-            .Include(f => f.Handler).ThenInclude(s => s!.User)
-            .Where(f => f.Membership.MemberId == member.Id)
-            .OrderByDescending(f => f.CreatedAt)
-            .ToListAsync(cancellationToken);
-
+        var list = await _freezeRequestRepository.GetByMemberIdWithDetailsAsync(member.Id, cancellationToken);
         return list.Select(f => MapFreezeDto(f, member.User.FullName, member.User.Phone, 0)).ToList();
     }
 
@@ -490,24 +422,14 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         string? status = null,
         CancellationToken cancellationToken = default)
     {
-        var query = _context.FreezeRequests
-            .AsNoTracking()
-            .Include(f => f.Membership).ThenInclude(m => m.Plan)
-            .Include(f => f.Membership).ThenInclude(m => m.Member).ThenInclude(mb => mb.User)
-            .Include(f => f.Membership).ThenInclude(m => m.FreezeRequests)
-            .Include(f => f.Handler).ThenInclude(s => s!.User)
-            .AsQueryable();
-
+        FreezeRequestStatus? filterStatus = null;
         if (!string.IsNullOrWhiteSpace(status) && !status.Equals("all", StringComparison.OrdinalIgnoreCase))
         {
             if (Enum.TryParse<FreezeRequestStatus>(status, true, out var parsedStatus))
-                query = query.Where(f => f.Status == parsedStatus);
+                filterStatus = parsedStatus;
         }
 
-        var list = await query
-            .OrderBy(f => f.Status == FreezeRequestStatus.Pending ? 0 : 1)
-            .ThenByDescending(f => f.CreatedAt)
-            .ToListAsync(cancellationToken);
+        var list = await _freezeRequestRepository.GetAllWithDetailsAsync(filterStatus, cancellationToken);
 
         // Tính trước số lịch lớp / PT sẽ tự hủy nếu duyệt cho các đơn Pending
         var pendingMemberIds = list
@@ -521,21 +443,17 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
 
         if (pendingMemberIds.Count > 0)
         {
-            var activeBookings = await _context.Bookings
-                .AsNoTracking()
-                .Include(b => b.ClassSession)
-                .Include(b => b.Availability)
-                .Where(b => pendingMemberIds.Contains(b.MemberId) &&
-                            (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Confirmed))
-                .ToListAsync(cancellationToken);
+            var activeBookings = await _bookingRepository.GetActiveByMemberIdsWithDetailsAsync(
+                pendingMemberIds,
+                asNoTracking: true,
+                cancellationToken);
 
             bookingsByMember = activeBookings.GroupBy(b => b.MemberId).ToDictionary(g => g.Key, g => g.ToList());
 
-            var activeWaitlists = await _context.WaitlistEntries
-                .AsNoTracking()
-                .Include(w => w.ClassSession)
-                .Where(w => pendingMemberIds.Contains(w.MemberId) && w.Status == "WAITING")
-                .ToListAsync(cancellationToken);
+            var activeWaitlists = await _waitlistEntryRepository.GetWaitingByMemberIdsWithSessionAsync(
+                pendingMemberIds,
+                asNoTracking: true,
+                cancellationToken);
 
             waitlistsByMember = activeWaitlists.GroupBy(w => w.MemberId).ToDictionary(g => g.Key, g => g.ToList());
         }
@@ -589,15 +507,10 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         if (request.Days <= 0)
             throw new ValidationException("Số ngày tạm ngưng phải lớn hơn 0.");
 
-        var member = await _context.Members
-            .Include(m => m.User)
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken)
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, cancellationToken)
             ?? throw new NotFoundException("Không tìm thấy hồ sơ hội viên.");
 
-        var membership = await _context.Memberships
-            .Include(m => m.Plan)
-            .Include(m => m.FreezeRequests)
-            .FirstOrDefaultAsync(m => m.Id == request.MembershipId && m.MemberId == member.Id, cancellationToken)
+        var membership = await _membershipRepository.GetByIdAndMemberIdWithDetailsAsync(request.MembershipId, member.Id, cancellationToken)
             ?? throw new NotFoundException("Không tìm thấy gói hội viên.");
 
         if (!membership.Plan.PlanType.Equals("MEMBERSHIP", StringComparison.OrdinalIgnoreCase))
@@ -644,8 +557,8 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
             CreatedAt = DateTime.UtcNow
         };
 
-        _context.FreezeRequests.Add(freeze);
-        await _context.SaveChangesAsync(cancellationToken);
+        await _freezeRequestRepository.AddAsync(freeze, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         freeze.Membership = membership;
         return MapFreezeDto(freeze, member.User.FullName, member.User.Phone, 0);
@@ -657,20 +570,14 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         HandleFreezeRequest request,
         CancellationToken cancellationToken = default)
     {
-        var freeze = await _context.FreezeRequests
-            .Include(f => f.Membership).ThenInclude(m => m.Plan)
-            .Include(f => f.Membership).ThenInclude(m => m.Member).ThenInclude(mb => mb.User)
-            .Include(f => f.Membership).ThenInclude(m => m.FreezeRequests)
-            .FirstOrDefaultAsync(f => f.Id == freezeRequestId, cancellationToken)
+        var freeze = await _freezeRequestRepository.GetByIdWithFullDetailsAsync(freezeRequestId, cancellationToken)
             ?? throw new NotFoundException("Không tìm thấy yêu cầu tạm ngưng.");
 
         if (freeze.Status != FreezeRequestStatus.Pending)
             throw new ValidationException("Yêu cầu tạm ngưng này đã được xử lý trước đó.");
 
         // Lưu Staff.Id (KHÔNG lưu User.Id) để đảm bảo đúng khóa ngoại Freeze_Requests.Handled_By -> Staff.Id
-        var staff = await _context.Staff
-            .Include(s => s.User)
-            .FirstOrDefaultAsync(s => s.UserId == staffUserId, cancellationToken);
+        var staff = await _staffRepository.GetByUserIdWithUserAsync(staffUserId, cancellationToken);
 
         freeze.HandledBy = staff?.Id;
         freeze.Handler = staff;
@@ -682,15 +589,15 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         if (!request.Approve)
         {
             freeze.Status = FreezeRequestStatus.Rejected;
-            _context.Notifications.Add(SchedulingHelpers.BuildNotification(
+            await _notificationRepository.AddAsync(SchedulingHelpers.BuildNotification(
                 memberUserId,
                 "FREEZE_REJECTED",
                 "Yêu cầu tạm ngưng gói bị từ chối",
                 $"Yêu cầu tạm ngưng {freeze.Days} ngày ({freeze.FromDate:dd/MM/yyyy} – {freeze.ToDate:dd/MM/yyyy}) cho gói {freeze.Membership.Plan.Name} chưa được duyệt.{noteSuffix}",
                 "FreezeRequest",
-                freeze.Id));
+                freeze.Id), cancellationToken);
 
-            await _context.SaveChangesAsync(cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
             return MapFreezeDto(freeze, member.User.FullName, member.User.Phone, 0);
         }
 
@@ -708,13 +615,10 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         }
 
         // Tự động hủy toàn bộ Bookings (Lớp & PT) rơi vào khoảng [fromDate..toDate]
-        var memberBookings = await _context.Bookings
-            .Include(b => b.ClassSession).ThenInclude(cs => cs!.GymClass)
-            .Include(b => b.Availability)
-            .Include(b => b.Membership)
-            .Where(b => b.MemberId == member.Id &&
-                        (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Confirmed))
-            .ToListAsync(cancellationToken);
+        var memberBookings = await _bookingRepository.GetActiveByMemberIdsWithDetailsAsync(
+            new[] { member.Id },
+            asNoTracking: false,
+            cancellationToken);
 
         var affectedClassSessionIds = new HashSet<Guid>();
         var autoCancelledCount = 0;
@@ -747,10 +651,10 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         }
 
         // Hủy các WaitlistEntry rơi vào khoảng Freeze
-        var memberWaitlists = await _context.WaitlistEntries
-            .Include(w => w.ClassSession)
-            .Where(w => w.MemberId == member.Id && w.Status == "WAITING")
-            .ToListAsync(cancellationToken);
+        var memberWaitlists = await _waitlistEntryRepository.GetWaitingByMemberIdsWithSessionAsync(
+            new[] { member.Id },
+            asNoTracking: false,
+            cancellationToken);
 
         foreach (var w in memberWaitlists)
         {
@@ -763,7 +667,7 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
             }
         }
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         // Đôn Waitlist lên chỗ trống cho các buổi lớp nhóm vừa tự hủy (nếu còn > T-cutoff)
         if (affectedClassSessionIds.Count > 0)
@@ -775,15 +679,15 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
             ? $" {autoCancelledCount} lịch tập trong thời gian tạm ngưng đã được tự động hủy và hoàn lượt."
             : string.Empty;
 
-        _context.Notifications.Add(SchedulingHelpers.BuildNotification(
+        await _notificationRepository.AddAsync(SchedulingHelpers.BuildNotification(
             memberUserId,
             "FREEZE_APPROVED",
             "Đã duyệt tạm ngưng gói tập",
             $"Yêu cầu tạm ngưng {freeze.Days} ngày ({freeze.FromDate:dd/MM/yyyy} – {freeze.ToDate:dd/MM/yyyy}) cho gói {freeze.Membership.Plan.Name} đã được duyệt. Hạn mới: {freeze.Membership.EndDate:dd/MM/yyyy}.{extraMsg}{noteSuffix}",
             "FreezeRequest",
-            freeze.Id));
+            freeze.Id), cancellationToken);
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return MapFreezeDto(freeze, member.User.FullName, member.User.Phone, autoCancelledCount);
     }
@@ -801,10 +705,7 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
 
         foreach (var sessionId in sessionIds)
         {
-            var session = await _context.ClassSessions
-                .Include(s => s.GymClass).ThenInclude(gc => gc.Branch)
-                .FirstOrDefaultAsync(s => s.Id == sessionId, cancellationToken);
-
+            var session = await _classSessionRepository.GetByIdWithDetailsAsync(sessionId, cancellationToken);
             if (session == null ||
                 session.Status.Equals("CANCELLED", StringComparison.OrdinalIgnoreCase) ||
                 session.Status.Equals("COMPLETED", StringComparison.OrdinalIgnoreCase))
@@ -813,27 +714,17 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
             var startUtc = SchedulingHelpers.Utc(session.StartAt);
             if ((startUtc - nowUtc).TotalHours > cutoffHours)
             {
-                var confirmedSeats = await _context.Bookings
-                    .CountAsync(b => b.ClassSessionId == sessionId &&
-                                     (b.Status == BookingStatus.Confirmed || b.Status == BookingStatus.Attended),
-                                cancellationToken);
-
+                var confirmedSeats = await _bookingRepository.CountConfirmedSeatsAsync(sessionId, cancellationToken);
                 if (confirmedSeats < session.GymClass.Capacity)
                 {
-                    var candidate = await _context.WaitlistEntries
-                        .Include(w => w.Member).ThenInclude(m => m.User)
-                        .Where(w => w.ClassSessionId == sessionId && w.Status == "WAITING")
-                        .OrderByDescending(w => w.PriorityLevel)
-                        .ThenBy(w => w.RegisteredAt)
-                        .FirstOrDefaultAsync(cancellationToken);
+                    var waitingList = await _waitlistEntryRepository.GetWaitingBySessionOrderedAsync(sessionId, cancellationToken);
+                    var candidate = waitingList.FirstOrDefault();
 
                     if (candidate != null)
                     {
-                        var candidateMemberships = await _context.Memberships
-                            .Include(m => m.Plan).ThenInclude(p => p.PlanBranches)
-                            .Include(m => m.FreezeRequests)
-                            .Where(m => m.MemberId == candidate.MemberId)
-                            .ToListAsync(cancellationToken);
+                        var candidateMemberships = await _membershipRepository.GetByMemberIdWithPlanAndFreezeAsync(
+                            candidate.MemberId,
+                            cancellationToken);
 
                         var sessionVnDate = SchedulingHelpers.ToVietnamDate(startUtc);
                         var (ok, eligibleMs, _) = SchedulingHelpers.EvaluateMembershipForClass(
@@ -854,28 +745,24 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
                                 Status = BookingStatus.Confirmed,
                                 CreatedAt = nowUtc
                             };
-                            _context.Bookings.Add(promotedBooking);
+                            await _bookingRepository.AddAsync(promotedBooking, cancellationToken);
 
                             var startLocal = startUtc.Add(SchedulingHelpers.VietnamOffset).ToString("HH:mm dd/MM/yyyy");
-                            _context.Notifications.Add(SchedulingHelpers.BuildNotification(
+                            await _notificationRepository.AddAsync(SchedulingHelpers.BuildNotification(
                                 candidate.Member.UserId,
                                 "WAITLIST_PROMOTED",
                                 "Bạn đã được xếp vào lớp!",
                                 $"Có chỗ trống ở lớp {session.GymClass.Name} lúc {startLocal}. Bạn đã được tự động chuyển từ danh sách chờ vào lớp chính thức.",
                                 "Booking",
-                                promotedBooking.Id));
+                                promotedBooking.Id), cancellationToken);
                         }
                     }
                 }
             }
 
-            var updatedSeats = await _context.Bookings
-                .CountAsync(b => b.ClassSessionId == sessionId &&
-                                 (b.Status == BookingStatus.Confirmed || b.Status == BookingStatus.Attended),
-                            cancellationToken);
-
+            var updatedSeats = await _bookingRepository.CountConfirmedSeatsAsync(sessionId, cancellationToken);
             session.Status = updatedSeats >= session.GymClass.Capacity ? "FULL" : "SCHEDULED";
-            await _context.SaveChangesAsync(cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
         }
     }
 
@@ -917,17 +804,11 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         if (branchIds == null || branchIds.Count == 0)
             throw new ValidationException("Vui lòng chọn ít nhất một chi nhánh áp dụng khi không bật toàn hệ thống.");
 
-        var distinctIds = branchIds.Where(id => id != Guid.Empty).Distinct().ToList();
-        var existingIds = await _context.Branches
-            .AsNoTracking()
-            .Where(b => distinctIds.Contains(b.Id))
-            .Select(b => b.Id)
-            .ToListAsync(cancellationToken);
-
+        var existingIds = await _branchRepository.GetExistingIdsAsync(branchIds, cancellationToken);
         if (existingIds.Count == 0)
             throw new ValidationException("Không tìm thấy chi nhánh hợp lệ trong hệ thống.");
 
-        return existingIds;
+        return existingIds.ToList();
     }
 
     private async Task<Branch?> ResolvePurchaseBranchAsync(
@@ -937,8 +818,7 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
     {
         if (requestedBranchId.HasValue && requestedBranchId.Value != Guid.Empty)
         {
-            var branch = await _context.Branches
-                .FirstOrDefaultAsync(b => b.Id == requestedBranchId.Value, cancellationToken)
+            var branch = await _branchRepository.GetByIdAsync(requestedBranchId.Value, cancellationToken)
                 ?? throw new NotFoundException("Không tìm thấy chi nhánh đã chọn.");
 
             if (!plan.IsAllBranches &&
@@ -954,10 +834,10 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         if (!plan.IsAllBranches && plan.PlanBranches.Count > 0)
         {
             var firstAllowedBranchId = plan.PlanBranches.First().BranchId;
-            return await _context.Branches.FirstOrDefaultAsync(b => b.Id == firstAllowedBranchId, cancellationToken);
+            return await _branchRepository.GetByIdAsync(firstAllowedBranchId, cancellationToken);
         }
 
-        return await _context.Branches.OrderBy(b => b.Name).FirstOrDefaultAsync(cancellationToken);
+        return await _branchRepository.GetFirstOrderedByNameAsync(cancellationToken);
     }
 
     private static MembershipPlanDto MapPlanDto(MembershipPlan p) => new()

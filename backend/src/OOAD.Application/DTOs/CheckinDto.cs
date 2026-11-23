@@ -1,5 +1,3 @@
-using System.ComponentModel.DataAnnotations;
-
 namespace OOAD.Application.DTOs;
 
 public class CheckinDto
@@ -51,11 +49,8 @@ public class CheckinOperationResultDto
 
 public class CardCheckinRequest
 {
-    [Required(ErrorMessage = "Mã thẻ / QR không được để trống.")]
-    [MaxLength(100)]
     public string CardCode { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "Chi nhánh là bắt buộc.")]
     public Guid BranchId { get; set; }
 
     /// <summary>"QR" hoặc "Card" (mặc định "QR").</summary>
@@ -64,26 +59,20 @@ public class CardCheckinRequest
 
 public class ManualCheckinRequest
 {
-    [Required(ErrorMessage = "Vui lòng chọn hội viên.")]
     public Guid MemberId { get; set; }
 
     public Guid? BranchId { get; set; }
 
-    [Required(ErrorMessage = "Vui lòng nhập lý do check-in thủ công.")]
-    [MaxLength(500)]
     public string Reason { get; set; } = string.Empty;
 }
 
 public class CardCheckoutRequest
 {
-    [Required(ErrorMessage = "Mã thẻ / QR không được để trống.")]
-    [MaxLength(100)]
     public string CardCode { get; set; } = string.Empty;
 }
 
 public class ManualCheckoutRequest
 {
-    [Required]
     public Guid MemberId { get; set; }
 }
 

@@ -1,4 +1,3 @@
-using OOAD.Application.Common.Interfaces;
 using OOAD.Application.DTOs;
 using OOAD.Application.Services.Interfaces;
 using OOAD.Domain.Entities;
@@ -21,7 +20,6 @@ public class MemberCardService : IMemberCardService
     private readonly IMemberRepository _memberRepository;
     private readonly IUserRepository _userRepository;
     private readonly INotificationRepository _notificationRepository;
-    private readonly IAppDbContext _context;
     private readonly IUnitOfWork _unitOfWork;
 
     public MemberCardService(
@@ -29,14 +27,12 @@ public class MemberCardService : IMemberCardService
         IMemberRepository memberRepository,
         IUserRepository userRepository,
         INotificationRepository notificationRepository,
-        IAppDbContext context,
         IUnitOfWork unitOfWork)
     {
         _memberCardRepository = memberCardRepository;
         _memberRepository = memberRepository;
         _userRepository = userRepository;
         _notificationRepository = notificationRepository;
-        _context = context;
         _unitOfWork = unitOfWork;
     }
 

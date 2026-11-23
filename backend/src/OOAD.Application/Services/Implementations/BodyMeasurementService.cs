@@ -1,51 +1,48 @@
-using Microsoft.EntityFrameworkCore;
-using OOAD.Application.Common.Interfaces;
 using OOAD.Application.DTOs;
 using OOAD.Application.Services.Interfaces;
 using OOAD.Domain.Entities;
 using OOAD.Domain.Exceptions;
+using OOAD.Domain.Interfaces;
 
 namespace OOAD.Application.Services.Implementations;
 
 public class BodyMeasurementService : IBodyMeasurementService
 {
-    private readonly IAppDbContext _context;
+    private readonly IBodyMeasurementRepository _bodyMeasurementRepository;
+    private readonly IMetricTypeRepository _metricTypeRepository;
+    private readonly IMemberRepository _memberRepository;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public BodyMeasurementService(IAppDbContext context)
+    public BodyMeasurementService(
+        IBodyMeasurementRepository bodyMeasurementRepository,
+        IMetricTypeRepository metricTypeRepository,
+        IMemberRepository memberRepository,
+        IUnitOfWork unitOfWork)
     {
-        _context = context;
+        _bodyMeasurementRepository = bodyMeasurementRepository;
+        _metricTypeRepository = metricTypeRepository;
+        _memberRepository = memberRepository;
+        _unitOfWork = unitOfWork;
     }
 
     public async Task<IEnumerable<BodyMeasurementDto>> GetMemberMeasurementsAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var member = await _context.Members
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken);
-
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, cancellationToken);
         if (member == null)
             return Enumerable.Empty<BodyMeasurementDto>();
 
-        var measurements = await _context.BodyMeasurements
-            .Include(m => m.Values).ThenInclude(v => v.MetricType)
-            .Where(m => m.MemberId == member.Id)
-            .OrderBy(m => m.MeasuredAt)
-            .ToListAsync(cancellationToken);
-
+        var measurements = await _bodyMeasurementRepository.GetByMemberIdWithValuesAsync(member.Id, cancellationToken);
         return measurements.Select(MapToDto);
     }
 
     public async Task<BodyMeasurementDto> CreateMeasurementAsync(Guid userId, CreateBodyMeasurementRequest request, CancellationToken cancellationToken = default)
     {
-        var member = await _context.Members
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken);
-
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, cancellationToken);
         if (member == null)
             throw new NotFoundException("Không tìm thấy thông tin hội viên.");
 
-        var metricTypes = await _context.MetricTypes
-            .Where(mt => mt.IsActive)
-            .ToListAsync(cancellationToken);
-
-        var isFirst = !await _context.BodyMeasurements.AnyAsync(m => m.MemberId == member.Id, cancellationToken);
+        var metricTypes = await _metricTypeRepository.GetActiveOrderedAsync(cancellationToken);
+        var isFirst = !await _bodyMeasurementRepository.HasAnyForMemberAsync(member.Id, cancellationToken);
 
         var measurement = new BodyMeasurement
         {
@@ -55,9 +52,6 @@ public class BodyMeasurementService : IBodyMeasurementService
             Note = request.Note
         };
 
-        _context.BodyMeasurements.Add(measurement);
-
-        // Helper to add metric value if metric type exists and request has value
         void AddValue(string code, decimal? val)
         {
             if (!val.HasValue) return;
@@ -84,32 +78,28 @@ public class BodyMeasurementService : IBodyMeasurementService
         AddValue("CHEST", request.Chest);
         AddValue("HIPS", request.Hips);
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await _bodyMeasurementRepository.AddAsync(measurement, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return MapToDto(measurement);
+        var saved = await _bodyMeasurementRepository.GetByIdWithValuesAsync(measurement.Id, cancellationToken) ?? measurement;
+        return MapToDto(saved);
     }
 
     public async Task DeleteMeasurementAsync(Guid userId, Guid measurementId, CancellationToken cancellationToken = default)
     {
-        var member = await _context.Members
-            .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken)
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, cancellationToken)
             ?? throw new NotFoundException("Không tìm thấy thông tin hội viên.");
 
-        var measurement = await _context.BodyMeasurements
-            .FirstOrDefaultAsync(m => m.Id == measurementId && m.MemberId == member.Id, cancellationToken)
+        var measurement = await _bodyMeasurementRepository.GetByIdAndMemberIdAsync(measurementId, member.Id, cancellationToken)
             ?? throw new NotFoundException("Không tìm thấy mốc đo chỉ số cơ thể.");
 
-        _context.BodyMeasurements.Remove(measurement);
-        await _context.SaveChangesAsync(cancellationToken);
+        _bodyMeasurementRepository.Delete(measurement);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<IEnumerable<MetricTypeDto>> GetMetricTypesAsync(CancellationToken cancellationToken = default)
     {
-        var list = await _context.MetricTypes
-            .Where(m => m.IsActive)
-            .OrderBy(m => m.Name)
-            .ToListAsync(cancellationToken);
-
+        var list = await _metricTypeRepository.GetActiveOrderedAsync(cancellationToken);
         return list.Select(m => new MetricTypeDto
         {
             Id = m.Id,

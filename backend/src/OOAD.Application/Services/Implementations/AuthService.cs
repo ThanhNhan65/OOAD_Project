@@ -5,7 +5,6 @@ using OOAD.Domain.Entities;
 using OOAD.Domain.Enums;
 using OOAD.Domain.Exceptions;
 using OOAD.Domain.Interfaces;
-using Microsoft.EntityFrameworkCore;
 
 namespace OOAD.Application.Services.Implementations;
 
@@ -13,23 +12,29 @@ public class AuthService : IAuthService
 {
     private readonly IUserRepository _userRepository;
     private readonly IMemberRepository _memberRepository;
+    private readonly IMemberCardRepository _memberCardRepository;
+    private readonly ITrainerRepository _trainerRepository;
+    private readonly IStaffRepository _staffRepository;
     private readonly IBranchRepository _branchRepository;
-    private readonly IAppDbContext _context;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ITokenService _tokenService;
 
     public AuthService(
         IUserRepository userRepository,
         IMemberRepository memberRepository,
+        IMemberCardRepository memberCardRepository,
+        ITrainerRepository trainerRepository,
+        IStaffRepository staffRepository,
         IBranchRepository branchRepository,
-        IAppDbContext context,
         IUnitOfWork unitOfWork,
         ITokenService tokenService)
     {
         _userRepository = userRepository;
         _memberRepository = memberRepository;
+        _memberCardRepository = memberCardRepository;
+        _trainerRepository = trainerRepository;
+        _staffRepository = staffRepository;
         _branchRepository = branchRepository;
-        _context = context;
         _unitOfWork = unitOfWork;
         _tokenService = tokenService;
     }
@@ -149,7 +154,7 @@ public class AuthService : IAuthService
             user.Member = member;
 
             await _memberRepository.AddAsync(member, cancellationToken);
-            await _context.MemberCards.AddAsync(memberCard, cancellationToken);
+            await _memberCardRepository.AddAsync(memberCard, cancellationToken);
         }
         else if (targetRole == UserRole.Trainer)
         {
@@ -163,7 +168,7 @@ public class AuthService : IAuthService
             };
 
             user.Trainer = trainer;
-            await _context.Trainers.AddAsync(trainer, cancellationToken);
+            await _trainerRepository.AddAsync(trainer, cancellationToken);
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
@@ -243,7 +248,7 @@ public class AuthService : IAuthService
                     Gender = request.Gender
                 };
                 await _memberRepository.AddAsync(user.Member, cancellationToken);
-                await _context.MemberCards.AddAsync(new MemberCard
+                await _memberCardRepository.AddAsync(new MemberCard
                 {
                     MemberId = user.Member.Id,
                     CardCode = cardCode,
@@ -343,7 +348,7 @@ public class AuthService : IAuthService
                 Position = string.IsNullOrWhiteSpace(request.Position) ? "Receptionist" : request.Position.Trim()
             };
             user.Staff = staff;
-            await _context.Staff.AddAsync(staff, cancellationToken);
+            await _staffRepository.AddAsync(staff, cancellationToken);
         }
         else if (targetRole == UserRole.Trainer)
         {
@@ -356,7 +361,7 @@ public class AuthService : IAuthService
                 Bio = request.Bio?.Trim() ?? "Huấn luyện viên chuyên môn cao tại OOAD"
             };
             user.Trainer = trainer;
-            await _context.Trainers.AddAsync(trainer, cancellationToken);
+            await _trainerRepository.AddAsync(trainer, cancellationToken);
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);

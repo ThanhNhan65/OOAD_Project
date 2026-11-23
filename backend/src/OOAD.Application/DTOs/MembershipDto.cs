@@ -1,5 +1,3 @@
-using System.ComponentModel.DataAnnotations;
-
 namespace OOAD.Application.DTOs;
 
 public class MembershipDto
@@ -34,12 +32,10 @@ public class MembershipDto
 
 public class PurchaseMembershipRequest
 {
-    [Required(ErrorMessage = "Vui lòng chọn gói tập cần đăng ký.")]
     public Guid PlanId { get; set; }
 
     public Guid? BranchId { get; set; }
 
-    [MaxLength(50)]
     public string PaymentMethod { get; set; } = "ZaloPay";
 
     public bool SimulateSuccess { get; set; } = true;
@@ -51,7 +47,6 @@ public class RetryPaymentRequest
 
     public Guid? BranchId { get; set; }
 
-    [MaxLength(50)]
     public string PaymentMethod { get; set; } = "ZaloPay";
 
     public bool SimulateSuccess { get; set; } = true;

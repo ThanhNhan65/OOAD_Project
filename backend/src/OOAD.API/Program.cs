@@ -1,4 +1,5 @@
 using OOAD.API.Extensions;
+using OOAD.API.Filters;
 using OOAD.API.Middlewares;
 using OOAD.API.Services;
 using OOAD.Application;
@@ -27,8 +28,9 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
-// 3. Cấu hình Controllers & OpenAPI & Background Services
-builder.Services.AddControllers();
+// 3. Cấu hình Controllers, Validation Handler, OpenAPI & Background Services
+builder.Services.AddScoped<ValidationActionFilter>();
+builder.Services.AddControllers(options => options.Filters.AddService<ValidationActionFilter>());
 builder.Services.AddOpenApi();
 builder.Services.AddHostedService<WaitlistCutoffBackgroundService>();
 
@@ -46,7 +48,7 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// 5. Kích hoạt tự động tạo lại Database (28 bảng Fluent API) & Seed dữ liệu mẫu
+// 5. Kích hoạt tự động tạo lại Database (25 bảng Fluent API) & Seed dữ liệu mẫu
 await app.InitialiseDatabaseAsync();
 
 // 6. Cấu hình HTTP Request Pipeline

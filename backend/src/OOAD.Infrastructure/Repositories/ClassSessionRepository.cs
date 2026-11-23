@@ -6,10 +6,38 @@ using OOAD.Infrastructure.Persistence.Context;
 
 namespace OOAD.Infrastructure.Repositories;
 
-public class ClassSessionRepository : GenericRepository<ClassSession>, IClassSessionRepository
+public class ClassSessionRepository : IClassSessionRepository
 {
-    public ClassSessionRepository(AppDbContext context) : base(context)
+    private readonly AppDbContext _context;
+
+    public ClassSessionRepository(AppDbContext context)
     {
+        _context = context;
+    }
+
+    public async Task<ClassSession?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        return await _context.ClassSessions.FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ClassSession>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        return await _context.ClassSessions.AsNoTracking().ToListAsync(cancellationToken);
+    }
+
+    public async Task AddAsync(ClassSession entity, CancellationToken cancellationToken = default)
+    {
+        await _context.ClassSessions.AddAsync(entity, cancellationToken);
+    }
+
+    public void Update(ClassSession entity)
+    {
+        _context.ClassSessions.Update(entity);
+    }
+
+    public void Delete(ClassSession entity)
+    {
+        _context.ClassSessions.Remove(entity);
     }
 
     public async Task<IReadOnlyList<ClassSession>> GetSessionsWithDetailsAsync(
@@ -142,6 +170,39 @@ public class ClassSessionRepository : GenericRepository<ClassSession>, IClassSes
                 (s.Status == "SCHEDULED" || s.Status == "FULL") &&
                 s.StartAt <= cutoffThresholdUtc &&
                 s.WaitlistEntries.Any(w => w.Status == "WAITING"))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ClassSession>> GetByTrainerAndRangeAsync(
+        Guid trainerId,
+        DateTime? fromUtc = null,
+        DateTime? toUtc = null,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _context.ClassSessions
+            .Include(s => s.GymClass)
+            .Where(s => s.TrainerId == trainerId)
+            .AsNoTracking();
+
+        if (fromUtc.HasValue)
+            query = query.Where(s => s.StartAt >= fromUtc.Value);
+
+        if (toUtc.HasValue)
+            query = query.Where(s => s.EndAt <= toUtc.Value);
+
+        return await query.ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ClassSession>> GetPastNonCancelledWithDetailsAsync(
+        DateTime nowUtc,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.ClassSessions
+            .AsNoTracking()
+            .Include(s => s.Bookings)
+            .Include(s => s.WaitlistEntries)
+            .Include(s => s.Trainer).ThenInclude(t => t.User)
+            .Where(s => s.StartAt < nowUtc && s.Status != "CANCELLED")
             .ToListAsync(cancellationToken);
     }
 }

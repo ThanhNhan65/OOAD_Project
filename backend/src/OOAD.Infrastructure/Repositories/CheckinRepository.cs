@@ -6,10 +6,38 @@ using OOAD.Infrastructure.Persistence.Context;
 
 namespace OOAD.Infrastructure.Repositories;
 
-public class CheckinRepository : GenericRepository<Checkin>, ICheckinRepository
+public class CheckinRepository : ICheckinRepository
 {
-    public CheckinRepository(AppDbContext context) : base(context)
+    private readonly AppDbContext _context;
+
+    public CheckinRepository(AppDbContext context)
     {
+        _context = context;
+    }
+
+    public async Task<Checkin?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        return await _context.Checkins.FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Checkin>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        return await _context.Checkins.AsNoTracking().ToListAsync(cancellationToken);
+    }
+
+    public async Task AddAsync(Checkin entity, CancellationToken cancellationToken = default)
+    {
+        await _context.Checkins.AddAsync(entity, cancellationToken);
+    }
+
+    public void Update(Checkin entity)
+    {
+        _context.Checkins.Update(entity);
+    }
+
+    public void Delete(Checkin entity)
+    {
+        _context.Checkins.Remove(entity);
     }
 
     private IQueryable<Checkin> QueryWithDetails() => _context.Checkins
@@ -19,11 +47,10 @@ public class CheckinRepository : GenericRepository<Checkin>, ICheckinRepository
         .Include(c => c.Card)
         .Include(c => c.Recorder).ThenInclude(r => r!.User)
         .Include(c => c.Booking).ThenInclude(b => b!.ClassSession).ThenInclude(cs => cs!.GymClass);
-    
-    public async Task<Checkin?> GetOpenCheckinByMemberIdAsync(  
+
+    public async Task<Checkin?> GetOpenCheckinByMemberIdAsync(
         Guid memberId,
-        CancellationToken cancellationToken = default
-    )
+        CancellationToken cancellationToken = default)
     {
         return await QueryWithDetails()
             .Where(c => c.MemberId == memberId && c.CheckOutAt == null)
@@ -31,12 +58,9 @@ public class CheckinRepository : GenericRepository<Checkin>, ICheckinRepository
             .FirstOrDefaultAsync(cancellationToken);
     }
 
-    
-
     public async Task<Checkin?> GetByIdWithDetailsAsync(
         Guid id,
-        CancellationToken cancellationToken = default
-    )
+        CancellationToken cancellationToken = default)
     {
         return await QueryWithDetails()
             .AsNoTracking()
@@ -45,11 +69,10 @@ public class CheckinRepository : GenericRepository<Checkin>, ICheckinRepository
 
     public async Task<IReadOnlyList<Checkin>> GetActiveCheckinsAsync(
         Guid? branchId = null,
-        CancellationToken cancellationToken = default 
-    )
+        CancellationToken cancellationToken = default)
     {
         var query = QueryWithDetails().AsNoTracking().Where(c => c.CheckOutAt == null);
-        if(branchId.HasValue && branchId.Value != Guid.Empty)
+        if (branchId.HasValue && branchId.Value != Guid.Empty)
         {
             query = query.Where(c => c.BranchId == branchId.Value);
         }
@@ -65,8 +88,7 @@ public class CheckinRepository : GenericRepository<Checkin>, ICheckinRepository
         DateTime? toDateUtc = null,
         string? search = null,
         int take = 200,
-        CancellationToken cancellationToken = default
-    )
+        CancellationToken cancellationToken = default)
     {
         var query = QueryWithDetails().AsNoTracking();
 
@@ -90,7 +112,7 @@ public class CheckinRepository : GenericRepository<Checkin>, ICheckinRepository
                 (c.Card != null && c.Card.CardCode.ToLower().Contains(term)));
         }
 
-        return await query  
+        return await query
             .OrderByDescending(c => c.CheckInAt)
             .Take(Math.Clamp(take, 1, 500))
             .ToListAsync(cancellationToken);
@@ -127,5 +149,16 @@ public class CheckinRepository : GenericRepository<Checkin>, ICheckinRepository
             .ToListAsync(cancellationToken);
 
         return rows.ToDictionary(x => x.MemberId, x => x.FirstCheckInAt);
+    }
+
+    public async Task<IReadOnlyList<Checkin>> GetAllByBranchAsync(
+        Guid? branchId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _context.Checkins.AsNoTracking().AsQueryable();
+        if (branchId.HasValue)
+            query = query.Where(c => c.BranchId == branchId.Value);
+
+        return await query.ToListAsync(cancellationToken);
     }
 }

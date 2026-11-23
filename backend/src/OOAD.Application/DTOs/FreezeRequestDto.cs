@@ -1,5 +1,3 @@
-using System.ComponentModel.DataAnnotations;
-
 namespace OOAD.Application.DTOs;
 
 public class FreezeRequestDto
@@ -30,17 +28,12 @@ public class FreezeRequestDto
 
 public class CreateFreezeRequest
 {
-    [Required(ErrorMessage = "Vui lòng chọn gói hội viên cần tạm ngưng.")]
     public Guid MembershipId { get; set; }
 
-    [Required(ErrorMessage = "Vui lòng chọn ngày bắt đầu tạm ngưng.")]
     public DateTime FromDate { get; set; }
 
-    [Range(1, 365, ErrorMessage = "Số ngày tạm ngưng phải lớn hơn 0.")]
     public int Days { get; set; }
 
-    [Required(ErrorMessage = "Vui lòng nhập lý do tạm ngưng.")]
-    [MaxLength(500)]
     public string Reason { get; set; } = string.Empty;
 }
 
@@ -48,6 +41,5 @@ public class HandleFreezeRequest
 {
     public bool Approve { get; set; }
 
-    [MaxLength(500)]
     public string? Note { get; set; }
 }

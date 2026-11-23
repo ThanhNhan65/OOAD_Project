@@ -6,20 +6,46 @@ using OOAD.Infrastructure.Persistence.Context;
 
 namespace OOAD.Infrastructure.Repositories;
 
-public class BookingRepository : GenericRepository<Booking>, IBookingRepository
+public class BookingRepository : IBookingRepository
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
+    private readonly AppDbContext _context;
 
-    public BookingRepository(AppDbContext context) : base(context)
+    public BookingRepository(AppDbContext context)
     {
+        _context = context;
+    }
+
+    public async Task<Booking?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        return await _context.Bookings.FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Booking>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        return await _context.Bookings.AsNoTracking().ToListAsync(cancellationToken);
+    }
+
+    public async Task AddAsync(Booking entity, CancellationToken cancellationToken = default)
+    {
+        await _context.Bookings.AddAsync(entity, cancellationToken);
+    }
+
+    public void Update(Booking entity)
+    {
+        _context.Bookings.Update(entity);
+    }
+
+    public void Delete(Booking entity)
+    {
+        _context.Bookings.Remove(entity);
     }
 
     public async Task<Booking?> FindEligibleBookingForCheckinAsync(
         Guid memberId,
         Guid branchId,
         DateTime checkInUtc,
-        CancellationToken cancellationToken = default
-    )
+        CancellationToken cancellationToken = default)
     {
         var earlyWindow = checkInUtc.AddMinutes(60);
 
@@ -192,5 +218,120 @@ public class BookingRepository : GenericRepository<Booking>, IBookingRepository
                  b.Status == BookingStatus.Attended ||
                  b.Status == BookingStatus.NoShow),
                 cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Booking>> GetActiveByMemberIdsWithDetailsAsync(
+        IEnumerable<Guid> memberIds,
+        bool asNoTracking = false,
+        CancellationToken cancellationToken = default)
+    {
+        var idList = memberIds.Distinct().ToList();
+        if (idList.Count == 0)
+            return Array.Empty<Booking>();
+
+        var query = _context.Bookings
+            .Include(b => b.ClassSession).ThenInclude(cs => cs!.GymClass)
+            .Include(b => b.Availability)
+            .Include(b => b.Membership)
+            .Where(b => idList.Contains(b.MemberId) &&
+                        (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Confirmed));
+
+        if (asNoTracking)
+            query = query.AsNoTracking();
+
+        return await query.ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Booking>> GetPtBookingsByMemberIdAsync(
+        Guid memberId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.Bookings
+            .AsNoTracking()
+            .Include(b => b.Member).ThenInclude(m => m.User)
+            .Include(b => b.Availability).ThenInclude(a => a!.Trainer).ThenInclude(t => t.User)
+            .Include(b => b.Availability).ThenInclude(a => a!.Trainer).ThenInclude(t => t.Branch)
+            .Include(b => b.Membership).ThenInclude(ms => ms.Plan)
+            .Include(b => b.Review)
+            .Where(b => b.MemberId == memberId && b.Type == BookingType.PersonalTrainer && b.Availability != null)
+            .OrderByDescending(b => b.Availability!.StartAt)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Booking>> GetPtBookingsByTrainerIdAsync(
+        Guid trainerId,
+        DateTime? from = null,
+        DateTime? to = null,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _context.Bookings
+            .AsNoTracking()
+            .Include(b => b.Member).ThenInclude(m => m.User)
+            .Include(b => b.Availability)
+            .Include(b => b.Membership).ThenInclude(ms => ms.Plan)
+            .Where(b => b.Type == BookingType.PersonalTrainer &&
+                        b.Availability != null &&
+                        b.Availability.TrainerId == trainerId);
+
+        if (from.HasValue)
+            query = query.Where(b => b.Availability!.StartAt >= from.Value);
+
+        if (to.HasValue)
+            query = query.Where(b => b.Availability!.EndAt <= to.Value);
+
+        return await query
+            .OrderByDescending(b => b.Availability!.StartAt)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<Booking?> GetByIdAndMemberIdWithPtDetailsAsync(
+        Guid bookingId,
+        Guid memberId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.Bookings
+            .Include(b => b.Availability)
+            .Include(b => b.Membership)
+            .Include(b => b.ClassSession)
+            .FirstOrDefaultAsync(b => b.Id == bookingId && b.MemberId == memberId, cancellationToken);
+    }
+
+    public async Task<Booking?> GetByIdAndTrainerIdWithPtDetailsAsync(
+        Guid bookingId,
+        Guid trainerId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.Bookings
+            .Include(b => b.Availability)
+            .Include(b => b.Membership)
+            .FirstOrDefaultAsync(
+                b => b.Id == bookingId && b.Availability != null && b.Availability.TrainerId == trainerId,
+                cancellationToken);
+    }
+
+    public async Task<bool> HasPtTimeConflictAsync(
+        Guid memberId,
+        DateTime startAtUtc,
+        DateTime endAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.Bookings
+            .Include(b => b.Availability)
+            .AnyAsync(b => b.MemberId == memberId
+                        && b.Status != BookingStatus.Cancelled
+                        && b.Availability != null
+                        && b.Availability.StartAt < endAtUtc
+                        && b.Availability.EndAt > startAtUtc,
+                      cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Booking>> GetAllPtBookingsWithAvailabilityAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.Bookings
+            .AsNoTracking()
+            .Include(b => b.Availability)
+            .Where(b => b.Type != BookingType.Class && b.Availability != null)
+            .ToListAsync(cancellationToken);
     }
 }

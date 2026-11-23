@@ -5,10 +5,38 @@ using OOAD.Infrastructure.Persistence.Context;
 
 namespace OOAD.Infrastructure.Repositories;
 
-public class GymClassRepository : GenericRepository<GymClass>, IGymClassRepository
+public class GymClassRepository : IGymClassRepository
 {
-    public GymClassRepository(AppDbContext context) : base(context)
+    private readonly AppDbContext _context;
+
+    public GymClassRepository(AppDbContext context)
     {
+        _context = context;
+    }
+
+    public async Task<GymClass?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        return await _context.Classes.FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<GymClass>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        return await _context.Classes.AsNoTracking().ToListAsync(cancellationToken);
+    }
+
+    public async Task AddAsync(GymClass entity, CancellationToken cancellationToken = default)
+    {
+        await _context.Classes.AddAsync(entity, cancellationToken);
+    }
+
+    public void Update(GymClass entity)
+    {
+        _context.Classes.Update(entity);
+    }
+
+    public void Delete(GymClass entity)
+    {
+        _context.Classes.Remove(entity);
     }
 
     private IQueryable<GymClass> QueryWithDetails() => _context.Classes
@@ -36,6 +64,21 @@ public class GymClassRepository : GenericRepository<GymClass>, IGymClassReposito
             .ThenBy(c => c.StartTime)
             .ThenBy(c => c.Name)
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<GymClass>> GetAllWithBranchAsync(
+        Guid? branchId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _context.Classes
+            .AsNoTracking()
+            .Include(c => c.Branch)
+            .AsQueryable();
+
+        if (branchId.HasValue)
+            query = query.Where(c => c.BranchId == branchId.Value);
+
+        return await query.ToListAsync(cancellationToken);
     }
 
     public async Task<GymClass?> GetByIdWithDetailsAsync(
