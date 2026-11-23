@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using OOAD.Application.Common.Interfaces;
 using OOAD.Application.DTOs;
 using OOAD.Application.Services.Interfaces;
 
@@ -13,10 +14,12 @@ namespace OOAD.API.Controllers;
 public class PaymentsController : ApiControllerBase
 {
     private readonly IMembershipSubscriptionService _subscriptionService;
+    private readonly IPaymentGatewayService _paymentGatewaySercvice;
 
-    public PaymentsController(IMembershipSubscriptionService subscriptionService)
+    public PaymentsController(IMembershipSubscriptionService subscriptionService, IPaymentGatewayService paymentGatewayService)
     {
         _subscriptionService = subscriptionService;
+        _paymentGatewaySercvice = paymentGatewayService;
     }
 
     [HttpGet("me")]
@@ -46,5 +49,25 @@ public class PaymentsController : ApiControllerBase
     {
         var claim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         return Guid.TryParse(claim, out var id) ? id : null;
+    }
+
+    [HttpPost("process")]
+    [Authorize]
+    public async Task<ActionResult<ProcessPaymentRespone>> ProcessPayment ([FromBody] ProcessPaymentRequest request, CancellationToken ct)
+    {
+        var result = await _paymentGatewaySercvice.ProcessPaymentAsync(request, ct);
+        return Ok(result);
+    }
+    [HttpGet("vnpay-return")]
+    [AllowAnonymous]
+    public IActionResult VnpayReturn([FromQuery] Dictionary<string, string> queryParams)
+    {
+        // Lấy CardPaymentStrategy để kiểm tra chữ ký
+        if (queryParams.TryGetValue("vnp_ResponseCode", out var responseCode) && responseCode == "00")
+        {
+            // 00 = Thành công: Bạn có thể cập nhật Payment.Status = Completed & Membership.Status = Active tại đây
+            return Ok(new { success = true, message = "Thanh toán VNPay thành công!", data = queryParams });
+        }
+        return BadRequest(new { success = false, message = "Giao dịch không thành công hoặc bị hủy." });
     }
 }

@@ -1,0 +1,365 @@
+{
+  "info": {
+    "_postman_id": "e8a93d25-9f5b-4b12-9c9e-payment-ooad-2026",
+    "name": "OOAD - Payment Gateway & Sandbox Collection",
+    "description": "Bộ sưu tập test API Thanh toán Mock & Sandbox (VNPay, ZaloPay) cho đồ án OOAD Gym Management System.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5111",
+      "type": "string"
+    },
+    {
+      "key": "authToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "planId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "membershipId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Authentication",
+      "item": [
+        {
+          "name": "1.1 Login Member (Lấy Token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.token) {",
+                  "    pm.collectionVariables.set(\"authToken\", jsonData.token);",
+                  "    console.log(\"Saved authToken:\", jsonData.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"hoivien@ooad.vn\",\n  \"password\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login"]
+            },
+            "description": "Đăng nhập tài khoản hội viên mặc định để lấy JWT Bearer Token."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Membership Plans & Đăng ký",
+      "item": [
+        {
+          "name": "2.1 Lấy danh sách Gói tập (Lấy PlanId)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (Array.isArray(jsonData) && jsonData.length > 0) {",
+                  "    pm.collectionVariables.set(\"planId\", jsonData[0].id);",
+                  "    console.log(\"Saved planId:\", jsonData[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/membership-plans",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "membership-plans"]
+            },
+            "description": "Lấy danh sách các gói tập để tự động gán planId vào biến môi trường."
+          }
+        },
+        {
+          "name": "2.2 Đăng ký gói (Tạo Membership trạng thái Pending)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData && jsonData.membership && jsonData.membership.id) {",
+                  "    pm.collectionVariables.set(\"membershipId\", jsonData.membership.id);",
+                  "    console.log(\"Saved membershipId:\", jsonData.membership.id);",
+                  "} else if (jsonData && jsonData.id) {",
+                  "    pm.collectionVariables.set(\"membershipId\", jsonData.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{authToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"planId\": \"{{planId}}\",\n  \"paymentMethod\": \"CARD\",\n  \"simulateSuccess\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/memberships/purchase",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "memberships", "purchase"]
+            },
+            "description": "Tạo đơn đăng ký gói tập với simulateSuccess = false để gói ở trạng thái Pending, chuẩn bị cho thanh toán."
+          }
+        },
+        {
+          "name": "2.3 Lấy danh sách gói của tôi (Kiểm tra trạng thái)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{authToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/memberships/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "memberships", "me"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Thanh toán Sandbox & Mock",
+      "item": [
+        {
+          "name": "3.1 [VNPay Sandbox] Tạo link thanh toán Thẻ Ngân hàng",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{authToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"membershipId\": \"{{membershipId}}\",\n  \"method\": \"CARD\",\n  \"idempotencyKey\": \"VNPAY_{{$timestamp}}\",\n  \"useSandbox\": true,\n  \"mockSuccess\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/process",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "process"]
+            },
+            "description": "Gọi tạo URL VNPay Sandbox thật. Copy giá trị paymentUrl trong JSON kết quả dán vào trình duyệt để test thanh toán qua ngân hàng NCB."
+          }
+        },
+        {
+          "name": "3.2 [ZaloPay Sandbox] Tạo link / Mã QR Ví điện tử",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{authToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"membershipId\": \"{{membershipId}}\",\n  \"method\": \"WALLET\",\n  \"idempotencyKey\": \"ZALOPAY_{{$timestamp}}\",\n  \"useSandbox\": true,\n  \"mockSuccess\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/process",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "process"]
+            },
+            "description": "Gọi API ZaloPay Sandbox v2 thật. Trả về paymentUrl (trang thanh toán chứa mã QR ZaloPay)."
+          }
+        },
+        {
+          "name": "3.3 [Mock Nội bộ] Giả lập Thanh toán Thành công",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{authToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"membershipId\": \"{{membershipId}}\",\n  \"method\": \"CARD\",\n  \"idempotencyKey\": \"MOCK_OK_{{$timestamp}}\",\n  \"useSandbox\": false,\n  \"mockSuccess\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/process",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "process"]
+            },
+            "description": "Giả lập trễ mạng 200ms và kích hoạt gói thành công ngay trong DB (không gọi ra cổng ngoài)."
+          }
+        },
+        {
+          "name": "3.4 [Mock Nội bộ] Giả lập Thất bại (Thẻ hết hạn mức/từ chối)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{authToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"membershipId\": \"{{membershipId}}\",\n  \"method\": \"CARD\",\n  \"idempotencyKey\": \"MOCK_FAIL_{{$timestamp}}\",\n  \"useSandbox\": false,\n  \"mockSuccess\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/process",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "process"]
+            },
+            "description": "Giả lập tình huống lỗi thẻ ngân hàng bị từ chối."
+          }
+        },
+        {
+          "name": "3.5 [Idempotency Check] Test chống trừ tiền 2 lần",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{authToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"membershipId\": \"{{membershipId}}\",\n  \"method\": \"CARD\",\n  \"idempotencyKey\": \"SAME_KEY_123456\",\n  \"useSandbox\": false,\n  \"mockSuccess\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/process",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "process"]
+            },
+            "description": "Bấm gửi 2 lần liên tiếp với cùng một idempotencyKey. Lần 2 sẽ trả về isIdempotent: true mà không trừ tiền lại."
+          }
+        },
+        {
+          "name": "3.6 Lịch sử thanh toán của tôi",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{authToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "me"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

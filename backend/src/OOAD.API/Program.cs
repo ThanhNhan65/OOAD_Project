@@ -16,7 +16,7 @@ builder.Configuration.GetSection(BusinessRuleOptions.SectionName).Bind(businessR
 builder.Services.AddSingleton(businessRules);
 builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices(builder.Configuration);
-
+builder.Services.AddHttpClient();
 // 2. Cấu hình JWT Authentication & Role-based Authorization
 builder.Services
     .AddAuthentication(options =>

@@ -96,3 +96,20 @@ public class HandleFreezeRequestValidator : AbstractValidator<HandleFreezeReques
             .When(x => x.Note != null);
     }
 }
+
+public class ProcessPaymentRequestValidator : AbstractValidator<ProcessPaymentRequest>
+{
+    public ProcessPaymentRequestValidator()
+    {
+        RuleFor(x => x.MembershipId)
+            .NotEmpty().WithMessage("Vui lòng chọn gói đăng ký cần thanh toán.");
+
+        RuleFor(x => x.Method)
+            .NotEmpty().WithMessage("Phương thức thanh toán không được để trống.")
+            .MaximumLength(50).WithMessage("Phương thức thanh toán tối đa 50 ký tự.");
+
+        RuleFor(x => x.IdempotencyKey)
+            .NotEmpty().WithMessage("IdempotencyKey không được để trống.")
+            .MaximumLength(100).WithMessage("IdempotencyKey tối đa 100 ký tự.");
+    }
+}

@@ -788,10 +788,18 @@ namespace OOAD.Infrastructure.Migrations
                         .HasColumnType("datetime2")
                         .HasColumnName("Created_At");
 
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
                     b.Property<string>("GatewayTxnCode")
                         .HasMaxLength(150)
                         .HasColumnType("nvarchar(150)")
                         .HasColumnName("Gateway_Txn_Code");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
 
                     b.Property<Guid>("MembershipId")
                         .HasColumnType("uniqueidentifier")
@@ -812,6 +820,10 @@ namespace OOAD.Infrastructure.Migrations
                         .HasColumnType("nvarchar(30)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique()
+                        .HasFilter("[IdempotencyKey] IS NOT NULL");
 
                     b.HasIndex("MembershipId");
 

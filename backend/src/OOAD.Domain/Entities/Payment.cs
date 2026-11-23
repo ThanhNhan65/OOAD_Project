@@ -7,7 +7,7 @@ public class Payment : BaseEntity
 {
     public Guid MembershipId { get; set; }
     public decimal Amount { get; set; }
-    public string Method { get; set; } = "CASH";
+    public string Method { get; set; } = "ZaloPay";
     public PaymentStatus Status { get; set; } = PaymentStatus.Completed;
     public string? GatewayTxnCode { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -15,4 +15,6 @@ public class Payment : BaseEntity
 
     // Navigation properties
     public Membership Membership { get; set; } = null!;
+    public string? IdempotencyKey {get; set;}
+    public string? FailureReason {get; set;}
 }

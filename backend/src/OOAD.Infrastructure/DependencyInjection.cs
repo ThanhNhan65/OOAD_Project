@@ -3,6 +3,7 @@ using OOAD.Domain.Interfaces;
 using OOAD.Infrastructure.Persistence.Context;
 using OOAD.Infrastructure.Persistence.Seed;
 using OOAD.Infrastructure.Repositories;
+using OOAD.Infrastructure.Services.Payments;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -35,6 +36,9 @@ public static class DependencyInjection
         services.AddScoped<IMembershipRepository, MembershipRepository>();
         services.AddScoped<IPaymentRepository, PaymentRepository>();
         services.AddScoped<IFreezeRequestRepository, FreezeRequestRepository>();
+        services.AddScoped<IPaymentStrategy, CardPaymentStrategy>();
+        services.AddScoped<IPaymentStrategy, WalletPaymentStrategy>();
+        services.AddScoped<IPaymentGatewayService, PaymentGatewayService>();
 
         // 3. Branch & Equipment
         services.AddScoped<IBranchRepository, BranchRepository>();
