@@ -6,7 +6,7 @@ using OOAD.Infrastructure.Repositories;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-
+using OOAD.Infrastructure.Services.Payments;
 namespace OOAD.Infrastructure;
 
 public static class DependencyInjection
@@ -17,7 +17,10 @@ public static class DependencyInjection
             ?? "Server=(localdb)\\mssqllocaldb;Database=OOADDb;Trusted_Connection=True;MultipleActiveResultSets=true;TrustServerCertificate=True";
 
         services.AddDbContext<AppDbContext>(options =>
-            options.UseSqlServer(connectionString, b => b.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)));
+        {
+            options.UseSqlServer(connectionString, b => b.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName));
+            options.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
+        });
 
         services.AddScoped<IAppDbContext>(provider => provider.GetRequiredService<AppDbContext>());
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<AppDbContext>());
@@ -52,7 +55,10 @@ public static class DependencyInjection
         services.AddScoped<IBodyMeasurementRepository, BodyMeasurementRepository>();
         services.AddScoped<IMetricTypeRepository, MetricTypeRepository>();
         services.AddScoped<IMeasurementValueRepository, MeasurementValueRepository>();
-            
+        
+        services.AddScoped<IPaymentStrategy, CardPaymentStrategy>();
+        services.AddScoped<IPaymentStrategy, WalletPaymentStrategy>();
+        services.AddScoped<IPaymentGatewayService, PaymentGatewayService>();
 
         return services;
     }

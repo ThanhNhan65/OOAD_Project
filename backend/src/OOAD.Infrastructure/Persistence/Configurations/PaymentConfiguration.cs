@@ -43,5 +43,12 @@ public class PaymentConfiguration : IEntityTypeConfiguration<Payment>
             .WithMany(m => m.Payments)
             .HasForeignKey(p => p.MembershipId)
             .OnDelete(DeleteBehavior.Cascade);
+        builder.Property(p => p.IdempotencyKey)
+            .HasMaxLength(100);
+        builder.HasIndex(p => p.IdempotencyKey)
+            .IsUnique()
+            .HasFilter("[IdempotencyKey] IS NOT NULL");
+        builder.Property(p => p.FailureReason)
+            .HasMaxLength(500);
     }
 }
