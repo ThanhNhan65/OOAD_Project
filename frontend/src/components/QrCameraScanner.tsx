@@ -144,11 +144,9 @@ export function QrCameraScanner({
   }, [active, elementId]);
 
   return (
-    <div
-      id={elementId}
-      className={`qr-camera-mount${active ? '' : ' inactive'}`}
-      aria-hidden={!active}
-    />
+    <div className={`qr-camera-wrap${active ? '' : ' inactive'}`} aria-hidden={!active}>
+      <div id={elementId} className="qr-camera-mount" />
+    </div>
   );
 }
 
