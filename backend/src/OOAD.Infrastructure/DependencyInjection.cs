@@ -5,6 +5,7 @@ using OOAD.Infrastructure.Persistence.Seed;
 using OOAD.Infrastructure.Repositories;
 using OOAD.Infrastructure.Services.Payments;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -18,7 +19,8 @@ public static class DependencyInjection
             ?? "Server=(localdb)\\mssqllocaldb;Database=OOADDb;Trusted_Connection=True;MultipleActiveResultSets=true;TrustServerCertificate=True";
 
         services.AddDbContext<AppDbContext>(options =>
-            options.UseSqlServer(connectionString, b => b.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)));
+            options.UseSqlServer(connectionString, b => b.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName))
+                   .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)));
 
         services.AddScoped<AppDbContextInitialiser>();
         services.AddScoped<ITokenService, TokenService>();
