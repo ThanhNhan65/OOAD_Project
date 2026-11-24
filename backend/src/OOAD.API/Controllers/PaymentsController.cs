@@ -53,21 +53,49 @@ public class PaymentsController : ApiControllerBase
 
     [HttpPost("process")]
     [Authorize]
-    public async Task<ActionResult<ProcessPaymentRespone>> ProcessPayment ([FromBody] ProcessPaymentRequest request, CancellationToken ct)
+    public async Task<ActionResult<ProcessPaymentRespone>> ProcessPayment([FromBody] ProcessPaymentRequest request, CancellationToken ct)
     {
-        var result = await _paymentGatewaySercvice.ProcessPaymentAsync(request, ct);
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized(new { message = "Vui lòng đăng nhập." });
+
+        var role = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
+        var result = await _paymentGatewaySercvice.ProcessPaymentAsync(request, userId.Value, role, ct);
         return Ok(result);
     }
     [HttpGet("vnpay-return")]
     [AllowAnonymous]
-    public IActionResult VnpayReturn([FromQuery] Dictionary<string, string> queryParams)
+    [ProducesResponseType(typeof(PaymentVerificationResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<PaymentVerificationResult>> VnpayReturn(
+        [FromQuery] Dictionary<string, string> queryParams,
+        CancellationToken ct)
     {
-        // Lấy CardPaymentStrategy để kiểm tra chữ ký
-        if (queryParams.TryGetValue("vnp_ResponseCode", out var responseCode) && responseCode == "00")
+        var result = await _paymentGatewaySercvice.VerifyVnpayReturnAsync(queryParams, ct);
+        return Ok(result);
+    }
+
+    [HttpGet("zalopay-return")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(PaymentVerificationResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<PaymentVerificationResult>> ZaloPayReturn(
+        [FromQuery] string apptransid,
+        CancellationToken ct)
+    {
+        var result = await _paymentGatewaySercvice.VerifyZaloPayReturnAsync(apptransid, ct);
+        return Ok(result);
+    }
+
+    [HttpPost("zalopay-callback")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ZaloPayCallback(
+        [FromBody] ZaloPayCallbackRequest request,
+        CancellationToken ct)
+    {
+        var ok = await _paymentGatewaySercvice.HandleZaloPayCallbackAsync(request.Data, request.Mac, ct);
+        if (ok)
         {
-            // 00 = Thành công: Bạn có thể cập nhật Payment.Status = Completed & Membership.Status = Active tại đây
-            return Ok(new { success = true, message = "Thanh toán VNPay thành công!", data = queryParams });
+            return Ok(new { return_code = 1, return_message = "success" });
         }
-        return BadRequest(new { success = false, message = "Giao dịch không thành công hoặc bị hủy." });
+
+        return Ok(new { return_code = 0, return_message = "mac not equal or order not found" });
     }
 }

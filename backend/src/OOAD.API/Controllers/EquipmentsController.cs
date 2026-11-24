@@ -35,7 +35,7 @@ public class EquipmentsController : ApiControllerBase
     }
 
     [HttpPost]
-    [Authorize]
+    [Authorize(Roles = "ADMIN,Admin")]
     public async Task<ActionResult<EquipmentDto>> Create(
         [FromBody] CreateEquipmentDto dto,
         CancellationToken ct)
@@ -45,7 +45,7 @@ public class EquipmentsController : ApiControllerBase
     }
 
     [HttpPatch("{id:guid}/status")]
-    [Authorize]
+    [Authorize(Roles = "STAFF,ADMIN,Staff,Admin")]
     public async Task<ActionResult<EquipmentDto>> UpdateStatus(
         Guid id,
         [FromBody] UpdateEquipmentStatusDto dto,
@@ -73,15 +73,16 @@ public class EquipmentsController : ApiControllerBase
         CancellationToken ct)
     {
         var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        var role = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
         if (!Guid.TryParse(userIdStr, out var userId))
             return Unauthorized(new { message = "Token không hợp lệ." });
 
-        var created = await _equipmentService.CreateReportAsync(userId, dto, ct);
+        var created = await _equipmentService.CreateReportAsync(userId, role, dto, ct);
         return StatusCode(StatusCodes.Status201Created, created);
     }
 
     [HttpPatch("reports/{id:guid}/status")]
-    [Authorize]
+    [Authorize(Roles = "STAFF,ADMIN,Staff,Admin")]
     public async Task<ActionResult<EquipmentReportDto>> UpdateReportStatus(
         Guid id,
         [FromBody] UpdateReportStatusDto dto,

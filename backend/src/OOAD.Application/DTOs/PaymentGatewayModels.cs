@@ -27,7 +27,7 @@ public class ProcessPaymentRequest
     public bool UseSandbox {get; set;} = false;
     public string? IpAddr {get; set;}
 }
-// Respone trả ra cho Clinet 
+// Respone trả ra cho Client
 public class ProcessPaymentRespone
 {
     public bool Success {get; set;}
@@ -37,4 +37,28 @@ public class ProcessPaymentRespone
     public PaymentDto Payment {get; set;} = null!;
     public string? ErrorMessage {get; set;}
     public string? PaymentUrl {get; set;}
+}
+
+public class PaymentVerificationResult
+{
+    public bool Success { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public string Provider { get; set; } = string.Empty;
+    public string VerifiedBy { get; set; } = string.Empty;
+    public string? TransactionCode { get; set; }
+    public string? GatewayTransactionNo { get; set; }
+    public string? BankCode { get; set; }
+    public decimal Amount { get; set; }
+    public string PlanName { get; set; } = string.Empty;
+    public Guid? MembershipId { get; set; }
+    public string MembershipStatus { get; set; } = string.Empty;
+    public DateTime? PaidAt { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string? ErrorMessage { get; set; }
+}
+
+public class ZaloPayCallbackRequest
+{
+    public string Data { get; set; } = string.Empty;
+    public string Mac { get; set; } = string.Empty;
 }

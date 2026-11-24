@@ -57,34 +57,32 @@ public class ReviewService : IReviewService
         if (request.Rating < 1 || request.Rating > 5)
             throw new ValidationException("Số sao đánh giá phải từ 1 đến 5 sao.");
 
-        Guid? trainerId = request.TrainerId;
-        Guid? classId = request.ClassId;
+        if (!request.BookingId.HasValue || request.BookingId.Value == Guid.Empty)
+            throw new ValidationException("Vui lòng chọn buổi tập đã tham gia để đánh giá.");
 
-        if (request.BookingId.HasValue)
-        {
-            var booking = await _bookingRepository.GetByIdWithDetailsAsync(request.BookingId.Value, cancellationToken);
-            if (booking != null && booking.MemberId == member.Id)
-            {
-                if (booking.Availability != null)
-                {
-                    trainerId = booking.Availability.TrainerId;
-                }
-                else if (booking.ClassSession != null)
-                {
-                    trainerId = booking.ClassSession.TrainerId;
-                    classId = booking.ClassSession.ClassId;
-                }
-            }
-        }
+        var booking = await _bookingRepository.GetByIdWithDetailsAsync(request.BookingId.Value, cancellationToken)
+            ?? throw new NotFoundException("Không tìm thấy lượt đặt lịch cần đánh giá.");
+
+        if (booking.MemberId != member.Id)
+            throw new UnauthorizedAccessException("Bạn chỉ có thể đánh giá buổi tập của chính mình.");
+
+        if (booking.Status != Domain.Enums.BookingStatus.Attended)
+            throw new ValidationException("Chỉ được đánh giá sau khi đã được xác nhận tham gia buổi tập.");
+
+        if (booking.Review != null)
+            throw new ValidationException("Bạn đã đánh giá buổi tập này trước đó.");
+
+        Guid? trainerId = booking.Availability?.TrainerId ?? booking.ClassSession?.TrainerId;
+        Guid? classId = booking.ClassSession?.ClassId;
 
         var review = new Review
         {
             MemberId = member.Id,
             TrainerId = trainerId,
             ClassId = classId,
-            BookingId = request.BookingId,
+            BookingId = booking.Id,
             Rating = request.Rating,
-            Comment = request.Comment,
+            Comment = string.IsNullOrWhiteSpace(request.Comment) ? null : request.Comment.Trim(),
             CreatedAt = DateTime.UtcNow
         };
 

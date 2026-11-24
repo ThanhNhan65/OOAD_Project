@@ -44,7 +44,9 @@ public class CardPaymentStrategy : IPaymentStrategy
         var baseUrl = vnpSettings["BaseUrl"] ?? "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html"; // URL của trang thanh toán VNPAY
         var returnUrl = context.ReturnUrl ?? vnpSettings["ReturnUrl"] ?? "http://localhost:5173/payment-return"; // địa chỉ vnpay chuyển về sau khi thanh toán thành công
         var txnRef = $"CARD_{context.OrderCode}_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}"; // mã định danh duy nhất của giao dịch
-        var createDate = DateTime.Now.ToString("yyyyMMddHHmmss");
+        var vnNow = DateTime.UtcNow.AddHours(7);
+        var createDate = vnNow.ToString("yyyyMMddHHmmss");
+        var expireDate = vnNow.AddMinutes(15).ToString("yyyyMMddHHmmss");
         var vnpParams = new SortedDictionary<string, string>
         {
             { "vnp_Version", "2.1.0" },
@@ -58,7 +60,8 @@ public class CardPaymentStrategy : IPaymentStrategy
             { "vnp_Amount", ((long)(amount * 100)).ToString() }, // Đơn vị nhân 100
             { "vnp_ReturnUrl", returnUrl },
             { "vnp_IpAddr", context.IpAddress ?? "127.0.0.1" },
-            { "vnp_CreateDate", createDate }
+            { "vnp_CreateDate", createDate },
+            { "vnp_ExpireDate", expireDate }
         };
         // Ký HMAC-SHA512 
         var signData = string.Join("&", vnpParams.Select(kv => $"{WebUtility.UrlEncode(kv.Key)}={WebUtility.UrlEncode(kv.Value)}"));

@@ -252,6 +252,7 @@ public class BookingRepository : IBookingRepository
             .Include(b => b.Availability).ThenInclude(a => a!.Trainer).ThenInclude(t => t.User)
             .Include(b => b.Availability).ThenInclude(a => a!.Trainer).ThenInclude(t => t.Branch)
             .Include(b => b.Membership).ThenInclude(ms => ms.Plan)
+            .Include(b => b.Checkin)
             .Include(b => b.Review)
             .Where(b => b.MemberId == memberId && b.Type == BookingType.PersonalTrainer && b.Availability != null)
             .OrderByDescending(b => b.Availability!.StartAt)
@@ -269,6 +270,7 @@ public class BookingRepository : IBookingRepository
             .Include(b => b.Member).ThenInclude(m => m.User)
             .Include(b => b.Availability)
             .Include(b => b.Membership).ThenInclude(ms => ms.Plan)
+            .Include(b => b.Checkin)
             .Where(b => b.Type == BookingType.PersonalTrainer &&
                         b.Availability != null &&
                         b.Availability.TrainerId == trainerId);
@@ -290,9 +292,11 @@ public class BookingRepository : IBookingRepository
         CancellationToken cancellationToken = default)
     {
         return await _context.Bookings
-            .Include(b => b.Availability)
+            .Include(b => b.Member).ThenInclude(m => m.User)
+            .Include(b => b.Availability).ThenInclude(a => a!.Trainer).ThenInclude(t => t.User)
             .Include(b => b.Membership)
             .Include(b => b.ClassSession)
+            .Include(b => b.Checkin)
             .FirstOrDefaultAsync(b => b.Id == bookingId && b.MemberId == memberId, cancellationToken);
     }
 
@@ -302,8 +306,10 @@ public class BookingRepository : IBookingRepository
         CancellationToken cancellationToken = default)
     {
         return await _context.Bookings
-            .Include(b => b.Availability)
+            .Include(b => b.Member).ThenInclude(m => m.User)
+            .Include(b => b.Availability).ThenInclude(a => a!.Trainer).ThenInclude(t => t.User)
             .Include(b => b.Membership)
+            .Include(b => b.Checkin)
             .FirstOrDefaultAsync(
                 b => b.Id == bookingId && b.Availability != null && b.Availability.TrainerId == trainerId,
                 cancellationToken);
@@ -319,6 +325,9 @@ public class BookingRepository : IBookingRepository
             .Include(b => b.Availability)
             .AnyAsync(b => b.MemberId == memberId
                         && b.Status != BookingStatus.Cancelled
+                        && b.Status != BookingStatus.Rejected
+                        && b.Status != BookingStatus.LateCancelled
+                        && b.Status != BookingStatus.AutoCancelled
                         && b.Availability != null
                         && b.Availability.StartAt < endAtUtc
                         && b.Availability.EndAt > startAtUtc,

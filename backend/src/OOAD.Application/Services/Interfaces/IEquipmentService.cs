@@ -10,6 +10,6 @@ public interface IEquipmentService
     Task<EquipmentDto?> UpdateStatusAsync(Guid id, string status, CancellationToken ct = default);
 
     Task<IEnumerable<EquipmentReportDto>> GetReportsAsync(Guid? equipmentId, Guid? branchId, CancellationToken ct = default);
-    Task<EquipmentReportDto> CreateReportAsync(Guid userId, CreateEquipmentReportDto dto, CancellationToken ct = default);
+    Task<EquipmentReportDto> CreateReportAsync(Guid userId, string userRole, CreateEquipmentReportDto dto, CancellationToken ct = default);
     Task<EquipmentReportDto?> UpdateReportStatusAsync(Guid reportId, Guid userId, string userRole, UpdateReportStatusDto dto, CancellationToken ct = default);
 }

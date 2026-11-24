@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { equipmentsApi } from '../../api/equipmentsApi';
 import { checkinsApi, type ApiCheckinDto, type ApiCheckinOperationResultDto, type ApiStaffDashboardDto } from '../../api/checkinsApi';
 import { membershipPlansApi, type ApiFreezeRequestDto } from '../../api/membershipPlansApi';
+import { emitAppDataChanged } from '../../api/notificationsApi';
 import { branchesApi, type BranchApiDto } from '../../api/branchesApi';
 import { classesApi, type ApiClassSessionDto } from '../../api/classesApi';
 import { getAuthToken, isApiNetworkError, request } from '../../api/apiClient';
@@ -185,7 +186,7 @@ function ResultPanel({ r }: { r: Result }) {
         )}
         {ar.autoAttendedBooking && ar.attendedBookingSummary && (
           <div className="small mt12" style={{ color: '#2ed47a', fontWeight: 600 }}>
-            ✓ Tự động điểm danh: {ar.attendedBookingSummary}
+            ✓ Đã ghi nhận check-in buổi tập: {ar.attendedBookingSummary}
           </div>
         )}
       </div>
@@ -903,6 +904,7 @@ export function StaffFreeze() {
         approve ? 'success' : 'info',
       );
       await loadFreezes();
+      emitAppDataChanged();
     } catch (err) {
       toast((err as Error).message, 'error');
     }
@@ -1332,6 +1334,7 @@ function UpdateReportModal({ report, onClose, onSaved }: { report: EquipmentRepo
     try {
       await equipmentsApi.updateReportStatus(report.id, status, note.trim());
       await onSaved();
+      emitAppDataChanged();
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Cập nhật thất bại');
@@ -1378,6 +1381,7 @@ function RecordBrokenModal({ equipments, onClose, onSaved }: { equipments: Equip
     try {
       await equipmentsApi.createReport({ equipmentId: eq, description: desc.trim() });
       await onSaved();
+      emitAppDataChanged();
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Ghi nhận thất bại');

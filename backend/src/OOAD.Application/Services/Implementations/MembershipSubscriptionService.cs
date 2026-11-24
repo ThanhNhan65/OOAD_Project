@@ -267,14 +267,28 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
             MembershipId = membership.Id,
             Amount = plan.Price,
             Method = method,
-            Status = request.SimulateSuccess ? PaymentStatus.Completed : PaymentStatus.Failed,
+            Status = request.SimulateSuccess
+                ? PaymentStatus.Completed
+                : (request.DeferPayment ? PaymentStatus.Pending : PaymentStatus.Failed),
             GatewayTxnCode = $"TXN-{nowUtc:yyyyMMddHHmmss}-{Guid.NewGuid().ToString("N")[..4].ToUpperInvariant()}",
             CreatedAt = nowUtc,
             PaidAt = request.SimulateSuccess ? nowUtc : null
         };
 
+        // Hủy các gói Pending cũ cùng loại bị bỏ dở trước đó (tránh tồn đọng đơn chờ cũ)
+        var existingMemberships = await _membershipRepository.GetByMemberIdForUpdateAsync(member.Id, cancellationToken);
+        foreach (var oldPending in existingMemberships.Where(m =>
+            m.Status == MembershipStatus.Pending &&
+            (m.Plan?.PlanType ?? "MEMBERSHIP").Equals(plan.PlanType, StringComparison.OrdinalIgnoreCase)))
+        {
+            oldPending.Status = MembershipStatus.Cancelled;
+        }
+
         await _membershipRepository.AddAsync(membership, cancellationToken);
-        await _paymentRepository.AddAsync(payment, cancellationToken);
+        if (request.SimulateSuccess || !request.DeferPayment)
+        {
+            await _paymentRepository.AddAsync(payment, cancellationToken);
+        }
 
         if (request.SimulateSuccess)
         {
@@ -558,6 +572,22 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
         };
 
         await _freezeRequestRepository.AddAsync(freeze, cancellationToken);
+
+        var staffUserIds = membership.BranchId.HasValue
+            ? await _staffRepository.GetStaffUserIdsByBranchIdAsync(membership.BranchId.Value, cancellationToken)
+            : (await _staffRepository.GetAllAsync(cancellationToken)).Select(s => s.UserId).Distinct().ToList();
+
+        foreach (var staffUid in staffUserIds.Distinct())
+        {
+            await _notificationRepository.AddAsync(SchedulingHelpers.BuildNotification(
+                staffUid,
+                "FREEZE_REQUESTED",
+                "Có yêu cầu tạm ngưng gói mới",
+                $"Hội viên {member.User.FullName} vừa gửi yêu cầu tạm ngưng gói {membership.Plan.Name} ({request.Days} ngày, từ {fromDate:dd/MM/yyyy}).",
+                "FreezeRequest",
+                freeze.Id), cancellationToken);
+        }
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         freeze.Membership = membership;
@@ -601,9 +631,27 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
             return MapFreezeDto(freeze, member.User.FullName, member.User.Phone, 0);
         }
 
-        // Duyệt Freeze -> Cộng thêm ngày vào hạn gói + cập nhật trạng thái nếu đang hiệu lực
+        // Duyệt Freeze -> Cộng thêm ngày vào hạn gói + dời các gói gia hạn nối tiếp + cập nhật trạng thái nếu đang hiệu lực
         freeze.Status = FreezeRequestStatus.Approved;
         freeze.Membership.EndDate = freeze.Membership.EndDate.AddDays(freeze.Days);
+
+        var trackedMemberships = await _membershipRepository.GetByMemberIdForUpdateAsync(member.Id, cancellationToken);
+        var shiftedIds = new HashSet<Guid> { freeze.Membership.Id };
+        var shiftQueue = new Queue<Guid>();
+        shiftQueue.Enqueue(freeze.Membership.Id);
+        while (shiftQueue.Count > 0)
+        {
+            var parentId = shiftQueue.Dequeue();
+            foreach (var renewedChild in trackedMemberships.Where(m =>
+                m.RenewedFromId == parentId &&
+                (m.Status == MembershipStatus.Active || m.Status == MembershipStatus.Pending) &&
+                shiftedIds.Add(m.Id)))
+            {
+                renewedChild.StartDate = renewedChild.StartDate.AddDays(freeze.Days);
+                renewedChild.EndDate = renewedChild.EndDate.AddDays(freeze.Days);
+                shiftQueue.Enqueue(renewedChild.Id);
+            }
+        }
 
         var todayVn = SchedulingHelpers.ToVietnamDate(DateTime.UtcNow);
         var fromDate = freeze.FromDate.Date;
@@ -712,50 +760,70 @@ public class MembershipSubscriptionService : IMembershipSubscriptionService
                 continue;
 
             var startUtc = SchedulingHelpers.Utc(session.StartAt);
+            var endUtc = SchedulingHelpers.Utc(session.EndAt);
             if ((startUtc - nowUtc).TotalHours > cutoffHours)
             {
                 var confirmedSeats = await _bookingRepository.CountConfirmedSeatsAsync(sessionId, cancellationToken);
                 if (confirmedSeats < session.GymClass.Capacity)
                 {
                     var waitingList = await _waitlistEntryRepository.GetWaitingBySessionOrderedAsync(sessionId, cancellationToken);
-                    var candidate = waitingList.FirstOrDefault();
+                    var sessionVnDateTime = startUtc.Add(SchedulingHelpers.VietnamOffset);
+                    var sessionVnDate = sessionVnDateTime.Date;
+                    var startLocal = sessionVnDateTime.ToString("HH:mm dd/MM/yyyy");
 
-                    if (candidate != null)
+                    foreach (var candidate in waitingList)
                     {
+                        if (candidate.Member.User.Status == UserStatus.Locked)
+                            continue;
+
                         var candidateMemberships = await _membershipRepository.GetByMemberIdWithPlanAndFreezeAsync(
                             candidate.MemberId,
                             cancellationToken);
 
-                        var sessionVnDate = SchedulingHelpers.ToVietnamDate(startUtc);
                         var (ok, eligibleMs, _) = SchedulingHelpers.EvaluateMembershipForClass(
                             candidateMemberships,
                             session.GymClass.BranchId,
                             session.GymClass.Branch?.Name ?? string.Empty,
                             sessionVnDate);
 
-                        if (ok && eligibleMs != null)
-                        {
-                            candidate.Status = "PROMOTED";
-                            var promotedBooking = new Booking
-                            {
-                                MemberId = candidate.MemberId,
-                                MembershipId = eligibleMs.Id,
-                                Type = BookingType.Class,
-                                ClassSessionId = session.Id,
-                                Status = BookingStatus.Confirmed,
-                                CreatedAt = nowUtc
-                            };
-                            await _bookingRepository.AddAsync(promotedBooking, cancellationToken);
+                        if (!ok || eligibleMs == null)
+                            continue;
 
-                            var startLocal = startUtc.Add(SchedulingHelpers.VietnamOffset).ToString("HH:mm dd/MM/yyyy");
-                            await _notificationRepository.AddAsync(SchedulingHelpers.BuildNotification(
-                                candidate.Member.UserId,
-                                "WAITLIST_PROMOTED",
-                                "Bạn đã được xếp vào lớp!",
-                                $"Có chỗ trống ở lớp {session.GymClass.Name} lúc {startLocal}. Bạn đã được tự động chuyển từ danh sách chờ vào lớp chính thức.",
-                                "Booking",
-                                promotedBooking.Id), cancellationToken);
+                        if (await _bookingRepository.HasActiveClassBookingAsync(candidate.MemberId, session.Id, cancellationToken))
+                            continue;
+
+                        if (await _bookingRepository.HasTimeConflictAsync(candidate.MemberId, startUtc, endUtc, null, cancellationToken))
+                            continue;
+
+                        if (eligibleMs.Plan.MaxBookingsPerMonth > 0)
+                        {
+                            var usedInMonth = await _bookingRepository.CountMonthlyClassBookingsUsedAsync(
+                                candidate.MemberId, sessionVnDateTime.Year, sessionVnDateTime.Month, cancellationToken);
+                            if (usedInMonth >= eligibleMs.Plan.MaxBookingsPerMonth)
+                                continue;
                         }
+
+                        candidate.Status = "PROMOTED";
+                        var promotedBooking = new Booking
+                        {
+                            MemberId = candidate.MemberId,
+                            MembershipId = eligibleMs.Id,
+                            Type = BookingType.Class,
+                            ClassSessionId = session.Id,
+                            Status = BookingStatus.Confirmed,
+                            CreatedAt = nowUtc
+                        };
+                        await _bookingRepository.AddAsync(promotedBooking, cancellationToken);
+
+                        await _notificationRepository.AddAsync(SchedulingHelpers.BuildNotification(
+                            candidate.Member.UserId,
+                            "WAITLIST_PROMOTED",
+                            "Bạn đã được xếp vào lớp!",
+                            $"Có chỗ trống ở lớp {session.GymClass.Name} lúc {startLocal}. Bạn đã được tự động chuyển từ danh sách chờ vào lớp chính thức.",
+                            "Booking",
+                            promotedBooking.Id), cancellationToken);
+
+                        break;
                     }
                 }
             }

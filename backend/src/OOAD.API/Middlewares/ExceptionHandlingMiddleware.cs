@@ -134,13 +134,17 @@ public class JwtAuthenticationHandler : AuthenticationHandler<AuthenticationSche
 
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        string? token = null;
         var authHeader = Request.Headers.Authorization.ToString();
-        if (string.IsNullOrWhiteSpace(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(authHeader) && authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
-            return Task.FromResult(AuthenticateResult.NoResult());
+            token = authHeader["Bearer ".Length..].Trim();
+        }
+        else if (Request.Path.StartsWithSegments("/hubs"))
+        {
+            token = Request.Query["access_token"].FirstOrDefault()?.Trim();
         }
 
-        var token = authHeader["Bearer ".Length..].Trim();
         if (string.IsNullOrWhiteSpace(token))
         {
             return Task.FromResult(AuthenticateResult.NoResult());

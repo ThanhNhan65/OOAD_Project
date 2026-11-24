@@ -110,6 +110,7 @@ export interface PurchaseMembershipPayload {
   branchId?: string;
   paymentMethod: string;
   simulateSuccess: boolean;
+  deferPayment?: boolean;
 }
 
 export interface PurchaseResultDto {
@@ -117,6 +118,42 @@ export interface PurchaseResultDto {
   payment: ApiPaymentDto;
   success: boolean;
   message: string;
+}
+
+export interface ProcessGatewayPaymentPayload {
+  membershipId: string;
+  method: 'VNPAY' | 'ZALOPAY';
+  idempotencyKey: string;
+  mockSuccess?: boolean;
+  useSandbox: boolean;
+  ipAddr?: string;
+}
+
+export interface ProcessGatewayPaymentResponse {
+  success: boolean;
+  isIdempotent: boolean;
+  membershipId: string;
+  membershipStatus: string;
+  payment: ApiPaymentDto;
+  errorMessage?: string | null;
+  paymentUrl?: string | null;
+}
+
+export interface PaymentVerificationResultDto {
+  success: boolean;
+  status: string;
+  provider: string;
+  verifiedBy: string;
+  transactionCode?: string | null;
+  gatewayTransactionNo?: string | null;
+  bankCode?: string | null;
+  amount: number;
+  planName: string;
+  membershipId?: string | null;
+  membershipStatus: string;
+  paidAt?: string | null;
+  message: string;
+  errorMessage?: string | null;
 }
 
 export const membershipPlansApi = {
@@ -163,6 +200,17 @@ export const membershipPlansApi = {
     const qs = branchId && branchId !== 'all' ? `?branchId=${encodeURIComponent(branchId)}` : '';
     return request<ApiPaymentDto[]>(`/payments${qs}`);
   },
+  processGatewayPayment: (payload: ProcessGatewayPaymentPayload) =>
+    request<ProcessGatewayPaymentResponse>('/payments/process', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  verifyVnpayReturn: (queryString: string) =>
+    request<PaymentVerificationResultDto>(`/payments/vnpay-return${queryString}`),
+  verifyZaloPayReturn: (appTransId: string) =>
+    request<PaymentVerificationResultDto>(
+      `/payments/zalopay-return?apptransid=${encodeURIComponent(appTransId)}`,
+    ),
 
   // Yêu cầu tạm ngưng gói (FreezeRequestsController)
   getMyFreezeRequests: () => request<ApiFreezeRequestDto[]>('/freeze-requests/me'),

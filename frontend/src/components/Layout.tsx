@@ -16,58 +16,76 @@ import {
   mapNotificationType,
   resolveNotificationLink,
   NOTIFICATIONS_CHANGED_EVENT,
+  NAV_COUNTS_CHANGED_EVENT,
   type NotificationApiDto,
 } from '../api/notificationsApi';
 import { ptApi } from '../api/ptApi';
 import { membershipPlansApi } from '../api/membershipPlansApi';
 import { equipmentsApi } from '../api/equipmentsApi';
+import { startRealtimeConnection, stopRealtimeConnection } from '../services/realtimeService';
 import type { Role, Notification } from '../types';
 
 interface NavItem { to: string; label: string; icon: ReactNode; count?: number; end?: boolean }
 
-function useNav(role: Role): { section: string; items: NavItem[] }[] {
+function useNav(role: Role, pathname: string): { section: string; items: NavItem[] }[] {
   const { user } = useApp();
   const [counts, setCounts] = useState({ pt: 0, freeze: 0, eq: 0 });
+  const userId = user?.id;
+  const userBranchId = user?.branchId;
+
+  const loadCounts = useCallback(async () => {
+    if (!getAuthToken() || !userId) return;
+    try {
+      if (role === 'trainer') {
+        const reqs = await ptApi.getTrainerPtRequests();
+        setCounts((c) => ({ ...c, pt: reqs.filter((r) => r.status.toLowerCase() === 'pending').length }));
+      } else if (role === 'receptionist') {
+        const [freezes, reps] = await Promise.all([
+          membershipPlansApi.getAllFreezeRequests('Pending').catch(() => []),
+          equipmentsApi.getReports().catch(() => []),
+        ]);
+        setCounts({
+          pt: 0,
+          freeze: freezes.filter((f) => f.status.toLowerCase() === 'pending').length,
+          eq: reps.filter((r) => r.status === 'pending' && (!userBranchId || r.branchId === userBranchId)).length,
+        });
+      } else if (role === 'admin') {
+        const reps = await equipmentsApi.getReports().catch(() => []);
+        setCounts((c) => ({ ...c, eq: reps.filter((r) => r.status === 'pending').length }));
+      }
+    } catch {
+      /* ignore nav badge fetch errors */
+    }
+  }, [role, userId, userBranchId]);
 
   useEffect(() => {
-    if (!getAuthToken() || !user) return;
-    let cancelled = false;
+    void loadCounts();
 
-    const loadCounts = async () => {
-      try {
-        if (role === 'trainer') {
-          const reqs = await ptApi.getTrainerPtRequests();
-          if (!cancelled) {
-            setCounts((c) => ({ ...c, pt: reqs.filter((r) => r.status.toLowerCase() === 'pending').length }));
-          }
-        } else if (role === 'receptionist') {
-          const [freezes, reps] = await Promise.all([
-            membershipPlansApi.getAllFreezeRequests('Pending').catch(() => []),
-            equipmentsApi.getReports().catch(() => []),
-          ]);
-          if (!cancelled) {
-            setCounts({
-              pt: 0,
-              freeze: freezes.length,
-              eq: reps.filter((r) => r.status === 'pending' && (!user.branchId || r.branchId === user.branchId)).length,
-            });
-          }
-        } else if (role === 'admin') {
-          const reps = await equipmentsApi.getReports().catch(() => []);
-          if (!cancelled) {
-            setCounts((c) => ({ ...c, eq: reps.filter((r) => r.status === 'pending').length }));
-          }
-        }
-      } catch {
-        /* ignore nav badge fetch errors */
+    const onRefresh = () => {
+      void loadCounts();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void loadCounts();
       }
     };
 
-    loadCounts();
+    window.addEventListener(NAV_COUNTS_CHANGED_EVENT, onRefresh);
+    window.addEventListener('focus', onRefresh);
+    document.addEventListener('visibilitychange', onVisibility);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void loadCounts();
+      }
+    }, 60000);
+
     return () => {
-      cancelled = true;
+      window.removeEventListener(NAV_COUNTS_CHANGED_EVENT, onRefresh);
+      window.removeEventListener('focus', onRefresh);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.clearInterval(timer);
     };
-  }, [role, user]);
+  }, [loadCounts, pathname]);
 
   const s = 18;
   switch (role) {
@@ -143,6 +161,7 @@ export const ntfStyle: Record<Notification['type'], { c: string; i: ReactNode }>
 function NotificationBell() {
   const { user } = useApp();
   const nav = useNavigate();
+  const loc = useLocation();
   const [open, setOpen] = useState(false);
   const [list, setList] = useState<NotificationApiDto[]>([]);
   const ref = useRef<HTMLDivElement>(null);
@@ -158,10 +177,33 @@ function NotificationBell() {
   }, [user]);
 
   useEffect(() => {
-    loadNotifications();
-    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, loadNotifications);
-    return () => window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, loadNotifications);
-  }, [loadNotifications]);
+    void loadNotifications();
+
+    const onRefresh = () => {
+      void loadNotifications();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void loadNotifications();
+      }
+    };
+
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, onRefresh);
+    window.addEventListener('focus', onRefresh);
+    document.addEventListener('visibilitychange', onVisibility);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void loadNotifications();
+      }
+    }, 60000);
+
+    return () => {
+      window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, onRefresh);
+      window.removeEventListener('focus', onRefresh);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.clearInterval(timer);
+    };
+  }, [loadNotifications, loc.pathname]);
 
   useEffect(() => {
     if (open) loadNotifications();
@@ -234,12 +276,30 @@ function NotificationBell() {
 }
 
 export function Layout({ role }: { role: Role }) {
-  const { user, logout, theme, toggleTheme } = useApp();
+  const { user, logout, theme, toggleTheme, toast } = useApp();
   const nav = useNavigate();
   const loc = useLocation();
   const [open, setOpen] = useState(false);
-  const sections = useNav(role);
+  const sections = useNav(role, loc.pathname);
+  const userId = user?.id;
+
   useEffect(() => setOpen(false), [loc.pathname]);
+
+  useEffect(() => {
+    if (!userId || !getAuthToken()) {
+      void stopRealtimeConnection();
+      return;
+    }
+
+    void startRealtimeConnection((title) => {
+      toast(title, 'info');
+    });
+
+    return () => {
+      void stopRealtimeConnection();
+    };
+  }, [userId, toast]);
+
   if (!user) return <Navigate to="/login" replace />;
   if (user.role !== role) return <Navigate to={homeOf(user.role)} replace />;
 

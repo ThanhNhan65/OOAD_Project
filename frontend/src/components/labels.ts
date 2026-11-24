@@ -62,10 +62,8 @@ export const reqLabel: Record<RequestStatus, L> = {
 };
 
 export const methodLabel: Record<PaymentMethod, string> = {
-  ZaloPay: 'Ví ZaloPay',
   vnpay: 'VNPay',
-  card: 'Thẻ quốc tế',
-  banking: 'Internet Banking',
+  ZaloPay: 'Ví ZaloPay',
 };
 
 export function formatPaymentMethod(method?: string | null): string {
@@ -73,16 +71,11 @@ export function formatPaymentMethod(method?: string | null): string {
   const key = method.trim().toLowerCase();
   switch (key) {
     case 'zalopay':
+    case 'wallet':
       return 'Ví ZaloPay';
     case 'vnpay':
-      return 'VNPay QR';
     case 'card':
-      return 'Thẻ Visa/Master';
-    case 'banking':
-    case 'transfer':
-      return 'Chuyển khoản / Banking';
-    case 'cash':
-      return 'Tiền mặt';
+      return 'VNPay';
     default:
       return method;
   }

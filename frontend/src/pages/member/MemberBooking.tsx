@@ -33,6 +33,7 @@ import { classesApi, type ApiClassSessionDetailDto, type ApiClassSessionDto } fr
 import { bookingsApi, type ApiMyScheduleSummaryDto } from '../../api/bookingsApi';
 import { branchesApi, type BranchApiDto } from '../../api/branchesApi';
 import { ptApi, type ApiPtBalanceDto } from '../../api/ptApi';
+import { emitAppDataChanged } from '../../api/notificationsApi';
 import { trainerService, type TrainerAvailabilityItem, type TrainerItem } from '../../services/trainer.service';
 import { getAuthToken, isApiNetworkError } from '../../api/apiClient';
 
@@ -788,6 +789,7 @@ function SessionModal({
       toast(res.message, res.outcome === 'WAITLISTED' ? 'warning' : 'success');
       await fetchDetail();
       await onChanged();
+      emitAppDataChanged();
     } catch (err) {
       toast((err as Error).message, 'error');
     } finally {
@@ -818,6 +820,7 @@ function SessionModal({
         toast(res.message, res.quotaRefunded ? 'success' : 'warning');
       }
       await onChanged();
+      emitAppDataChanged();
       onClose();
     } catch (err) {
       toast((err as Error).message, 'error');
@@ -1130,6 +1133,7 @@ export function MemberPT() {
           ptApi.getPtBalance().then(setApiBalance).catch(() => {}),
           loadTrainerSlots(tid),
         ]);
+        emitAppDataChanged();
       } catch (err) {
         if (isApiNetworkError(err)) {
           const r = act((d) => L.bookPT(d, user!.id, slot, note), 'Đã gửi yêu cầu đặt lịch, chờ HLV xác nhận');
@@ -1899,6 +1903,7 @@ export function MemberBookings() {
           toast('Đã hủy lịch hẹn PT thành công và hoàn lại buổi tập vào gói của bạn.', 'success');
         }
         await loadMySchedule();
+        emitAppDataChanged();
       } catch (err) {
         toast((err as Error).message, 'error');
       }

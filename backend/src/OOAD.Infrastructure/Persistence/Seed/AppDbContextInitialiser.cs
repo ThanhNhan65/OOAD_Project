@@ -44,6 +44,8 @@ public class AppDbContextInitialiser
                 await _context.Database.EnsureCreatedAsync();
             }
 
+            await EnsureNullableEquipmentIssueReportedByAsync();
+
             _logger.LogInformation("Khởi tạo cấu trúc 25 bảng Database thành công.");
         }
         catch (Exception ex)
@@ -67,6 +69,27 @@ public class AppDbContextInitialiser
                 _logger.LogError(innerEx, "Đã xảy ra lỗi trong quá trình khởi tạo Database.");
                 throw;
             }
+        }
+    }
+
+    private async Task EnsureNullableEquipmentIssueReportedByAsync()
+    {
+        try
+        {
+            await _context.Database.ExecuteSqlRawAsync(@"
+                IF EXISTS (
+                    SELECT 1 FROM sys.columns
+                    WHERE object_id = OBJECT_ID(N'Equipment_Issues')
+                      AND name = 'Reported_By'
+                      AND is_nullable = 0
+                )
+                BEGIN
+                    ALTER TABLE [Equipment_Issues] ALTER COLUMN [Reported_By] uniqueidentifier NULL;
+                END");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Bỏ qua bước cập nhật cột Equipment_Issues.Reported_By.");
         }
     }
 

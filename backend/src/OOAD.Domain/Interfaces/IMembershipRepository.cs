@@ -32,4 +32,7 @@ public interface IMembershipRepository
     Task<IReadOnlyList<Membership>> GetAllWithPlanAsync(
         Guid? branchId = null,
         CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Membership>> GetByMemberIdForUpdateAsync(
+        Guid memberId,
+        CancellationToken cancellationToken = default);
 }

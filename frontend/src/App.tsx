@@ -8,6 +8,7 @@ import { Login, Register } from './pages/Auth';
 import { Kiosk } from './pages/staff/StaffPages';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { AccountPage } from './pages/AccountPage';
+import { PaymentReturnPage } from './pages/member/PaymentReturnPage';
 
 // Member
 import { MemberHome } from './pages/member/MemberHome';
@@ -69,6 +70,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/kiosk" element={<Kiosk />} />
+          <Route path="/payment-return" element={<PaymentReturnPage />} />
 
           {/* Member Routes */}
           <Route path="/member" element={<Layout role="member" />}>

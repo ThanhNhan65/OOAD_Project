@@ -39,6 +39,8 @@ public class PurchaseMembershipRequest
     public string PaymentMethod { get; set; } = "ZaloPay";
 
     public bool SimulateSuccess { get; set; } = true;
+
+    public bool DeferPayment { get; set; } = false;
 }
 
 public class RetryPaymentRequest

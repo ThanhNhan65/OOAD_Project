@@ -130,4 +130,14 @@ public class MembershipRepository : IMembershipRepository
 
         return await query.ToListAsync(cancellationToken);
     }
+
+    public async Task<IReadOnlyList<Membership>> GetByMemberIdForUpdateAsync(
+        Guid memberId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.Memberships
+            .Include(m => m.Plan)
+            .Where(m => m.MemberId == memberId)
+            .ToListAsync(cancellationToken);
+    }
 }

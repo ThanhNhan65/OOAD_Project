@@ -465,6 +465,16 @@
       "key": "futureDow3",
       "value": "3",
       "type": "string"
+    },
+    {
+      "key": "zaloAppTransId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "secondMeasurementId",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -2032,7 +2042,7 @@
           ]
         },
         {
-          "name": "02. Create Branch",
+          "name": "02. Admin - Create Branch",
           "request": {
             "method": "POST",
             "header": [
@@ -2053,7 +2063,14 @@
               ]
             },
             "auth": {
-              "type": "noauth"
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
             },
             "body": {
               "mode": "raw",
@@ -2090,7 +2107,7 @@
           ]
         },
         {
-          "name": "03. Create Branch Negative - Empty Name (400)",
+          "name": "03. Admin - Create Branch Negative - Empty Name (400)",
           "request": {
             "method": "POST",
             "header": [
@@ -2111,7 +2128,14 @@
               ]
             },
             "auth": {
-              "type": "noauth"
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
             },
             "body": {
               "mode": "raw",
@@ -2171,7 +2195,7 @@
           ]
         },
         {
-          "name": "05. Update Branch",
+          "name": "05. Admin - Update Branch",
           "request": {
             "method": "PUT",
             "header": [
@@ -2193,7 +2217,14 @@
               ]
             },
             "auth": {
-              "type": "noauth"
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
             },
             "body": {
               "mode": "raw",
@@ -2214,6 +2245,60 @@
                 "exec": [
                   "pm.test('Status 200 OK', () => pm.response.to.have.status(200));",
                   "pm.expect(pm.response.json().name).to.include('Updated');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "05b. Member - Create Branch RBAC Forbidden (403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/branches",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "branches"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{memberToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Chi nhánh Trái Quyền\",\n  \"district\": \"Quận 1\",\n  \"address\": \"10 Nguyễn Huệ\",\n  \"phoneNumber\": \"02811112222\",\n  \"operatingHours\": \"06:00 - 22:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403 Forbidden for Member role', () => pm.response.to.have.status(403));"
                 ]
               }
             }
@@ -2820,7 +2905,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"planId\": \"{{basicPlanId}}\",\n  \"branchId\": \"{{branchId}}\",\n  \"paymentMethod\": \"VNPay\",\n  \"simulateSuccess\": false\n}",
+              "raw": "{\n  \"planId\": \"{{basicPlanId}}\",\n  \"branchId\": \"{{branchId}}\",\n  \"paymentMethod\": \"VNPay\",\n  \"simulateSuccess\": false,\n  \"deferPayment\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2980,6 +3065,7 @@
                   "    } else {",
                   "        pm.expect(json.errorMessage).to.be.a('string').and.not.empty;",
                   "    }",
+                  "    if (json.payment && json.payment.gatewayTxnCode) { pm.collectionVariables.set('zaloAppTransId', json.payment.gatewayTxnCode); }",
                   "});"
                 ]
               }
@@ -3242,12 +3328,12 @@
           ]
         },
         {
-          "name": "11. Payment - VNPay Return Callback Success (200)",
+          "name": "11. Payment - VNPay Return Invalid Signature (200)",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/payments/vnpay-return?vnp_ResponseCode=00&vnp_TxnRef=TEST_POSTMAN_001",
+              "raw": "{{baseUrl}}/api/payments/vnpay-return?vnp_ResponseCode=00&vnp_TxnRef=TEST_POSTMAN_001&vnp_SecureHash=INVALID_HASH",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -3264,6 +3350,10 @@
                 {
                   "key": "vnp_TxnRef",
                   "value": "TEST_POSTMAN_001"
+                },
+                {
+                  "key": "vnp_SecureHash",
+                  "value": "INVALID_HASH"
                 }
               ]
             },
@@ -3278,9 +3368,11 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status 200 OK & success = true', () => {",
+                  "pm.test('Status 200 OK & InvalidSignature rejected safely', () => {",
                   "    pm.response.to.have.status(200);",
-                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.success).to.eql(false);",
+                  "    pm.expect(json.status).to.eql('InvalidSignature');",
                   "});"
                 ]
               }
@@ -3288,28 +3380,24 @@
           ]
         },
         {
-          "name": "12. Payment - VNPay Return Callback Cancelled (400)",
+          "name": "12. Payment - ZaloPay Return Query (200)",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/payments/vnpay-return?vnp_ResponseCode=24&vnp_TxnRef=TEST_POSTMAN_FAIL",
+              "raw": "{{baseUrl}}/api/payments/zalopay-return?apptransid={{zaloAppTransId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "payments",
-                "vnpay-return"
+                "zalopay-return"
               ],
               "query": [
                 {
-                  "key": "vnp_ResponseCode",
-                  "value": "24"
-                },
-                {
-                  "key": "vnp_TxnRef",
-                  "value": "TEST_POSTMAN_FAIL"
+                  "key": "apptransid",
+                  "value": "{{zaloAppTransId}}"
                 }
               ]
             },
@@ -3320,13 +3408,76 @@
           "response": [],
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('zaloAppTransId')) {",
+                  "    pm.collectionVariables.set('zaloAppTransId', '261124_TEST_000000');",
+                  "}"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status 400 BadRequest & success = false', () => {",
-                  "    pm.response.to.have.status(400);",
-                  "    pm.expect(pm.response.json().success).to.eql(false);",
+                  "pm.test('Status 200 OK & Provider is ZaloPay', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.provider).to.eql('ZaloPay');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "12b. Payment - ZaloPay Callback Invalid MAC (200)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/zalopay-callback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "zalopay-callback"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"data\": \"{}\",\n  \"mac\": \"invalid_mac\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200 OK & MAC rejected (return_code = 0)', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().return_code).to.eql(0);",
                   "});"
                 ]
               }
@@ -6816,8 +6967,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "const base = new Date(Date.now() + 28 * 86400000);",
-                  "base.setUTCHours(13, 0, 0, 0);",
+                  "const base = new Date(Date.now() + 5 * 60000);",
                   "pm.collectionVariables.set('slot4Start', base.toISOString());",
                   "pm.collectionVariables.set('slot4End', new Date(base.getTime() + 3600000).toISOString());"
                 ]
@@ -7651,7 +7801,7 @@
           ]
         },
         {
-          "name": "05. NewMember - Delete Body Measurement (204)",
+          "name": "05. NewMember - Delete Initial Measurement Rejected (400)",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -7664,6 +7814,105 @@
                 "api",
                 "body-measurements",
                 "{{measurementId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{newMemberToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400 BadRequest (Initial measurement protected)', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "05b. NewMember - Create Second Body Measurement",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/body-measurements",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "body-measurements"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{newMemberToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"weight\": 71.8,\n  \"height\": 175,\n  \"bmi\": 23.4,\n  \"bodyFat\": 17.8,\n  \"muscleMass\": 33.8,\n  \"note\": \"Lần đo thứ 2 Postman E2E\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200 OK & Not Initial', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.isInitial).to.eql(false);",
+                  "    pm.collectionVariables.set('secondMeasurementId', json.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "05c. NewMember - Delete Second Body Measurement (204)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/body-measurements/{{secondMeasurementId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "body-measurements",
+                "{{secondMeasurementId}}"
               ]
             },
             "auth": {
@@ -8301,6 +8550,61 @@
           ]
         },
         {
+          "name": "07b. Staff - Record Broken Equipment Issue (201)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/equipments/reports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "equipments",
+                "reports"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{staffToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"equipmentId\": \"{{equipmentId}}\",\n  \"description\": \"Lễ tân ghi nhận máy báo lỗi màn hình\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201 Created for Staff report', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "08. Staff - List Equipment Reports",
           "request": {
             "method": "GET",
@@ -8704,6 +9008,46 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status 401 Unauthorized without Bearer token', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "17. Member - Overview Report RBAC Forbidden (403)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reports/overview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reports",
+                "overview"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{memberToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403 Forbidden for Member role', () => pm.response.to.have.status(403));"
                 ]
               }
             }

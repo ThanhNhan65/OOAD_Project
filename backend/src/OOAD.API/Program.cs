@@ -1,8 +1,10 @@
 using OOAD.API.Extensions;
 using OOAD.API.Filters;
+using OOAD.API.Hubs;
 using OOAD.API.Middlewares;
 using OOAD.API.Services;
 using OOAD.Application;
+using OOAD.Application.Common.Interfaces;
 using OOAD.Application.Common.Options;
 using OOAD.Infrastructure;
 using Microsoft.AspNetCore.Authentication;
@@ -32,6 +34,8 @@ builder.Services.AddAuthorization();
 // 3. Cấu hình Controllers, Validation Handler, OpenAPI & Background Services
 builder.Services.AddScoped<ValidationActionFilter>();
 builder.Services.AddControllers(options => options.Filters.AddService<ValidationActionFilter>());
+builder.Services.AddSignalR();
+builder.Services.AddScoped<IRealtimeNotifier, SignalRRealtimeNotifier>();
 builder.Services.AddOpenApi();
 builder.Services.AddHostedService<WaitlistCutoffBackgroundService>();
 
@@ -88,5 +92,6 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<NotificationHub>("/hubs/notifications");
 
 app.Run();

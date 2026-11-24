@@ -25,6 +25,11 @@
       "key": "membershipId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "zaloAppTransId",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -62,8 +67,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/auth/login",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "auth", "login"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
             },
             "description": "Đăng nhập tài khoản hội viên mặc định để lấy JWT Bearer Token."
           }
@@ -95,8 +106,13 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/membership-plans",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "membership-plans"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "membership-plans"
+              ]
             },
             "description": "Lấy danh sách các gói tập để tự động gán planId vào biến môi trường."
           }
@@ -140,12 +156,18 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"planId\": \"{{planId}}\",\n  \"paymentMethod\": \"CARD\",\n  \"simulateSuccess\": false\n}"
+              "raw": "{\n  \"planId\": \"{{planId}}\",\n  \"paymentMethod\": \"VNPay\",\n  \"simulateSuccess\": false,\n  \"deferPayment\": true\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/memberships/purchase",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "memberships", "purchase"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "memberships",
+                "purchase"
+              ]
             },
             "description": "Tạo đơn đăng ký gói tập với simulateSuccess = false để gói ở trạng thái Pending, chuẩn bị cho thanh toán."
           }
@@ -167,8 +189,14 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/memberships/me",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "memberships", "me"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "memberships",
+                "me"
+              ]
             }
           }
         }
@@ -199,12 +227,18 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"membershipId\": \"{{membershipId}}\",\n  \"method\": \"CARD\",\n  \"idempotencyKey\": \"VNPAY_{{$timestamp}}\",\n  \"useSandbox\": true,\n  \"mockSuccess\": true\n}"
+              "raw": "{\n  \"membershipId\": \"{{membershipId}}\",\n  \"method\": \"VNPAY\",\n  \"idempotencyKey\": \"VNPAY_{{$timestamp}}\",\n  \"useSandbox\": true,\n  \"mockSuccess\": true\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/payments/process",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "payments", "process"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "process"
+              ]
             },
             "description": "Gọi tạo URL VNPay Sandbox thật. Copy giá trị paymentUrl trong JSON kết quả dán vào trình duyệt để test thanh toán qua ngân hàng NCB."
           }
@@ -231,15 +265,35 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"membershipId\": \"{{membershipId}}\",\n  \"method\": \"WALLET\",\n  \"idempotencyKey\": \"ZALOPAY_{{$timestamp}}\",\n  \"useSandbox\": true,\n  \"mockSuccess\": true\n}"
+              "raw": "{\n  \"membershipId\": \"{{membershipId}}\",\n  \"method\": \"ZALOPAY\",\n  \"idempotencyKey\": \"ZALOPAY_{{$timestamp}}\",\n  \"useSandbox\": true,\n  \"mockSuccess\": true\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/payments/process",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "payments", "process"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "process"
+              ]
             },
             "description": "Gọi API ZaloPay Sandbox v2 thật. Trả về paymentUrl (trang thanh toán chứa mã QR ZaloPay)."
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData && jsonData.payment && jsonData.payment.gatewayTxnCode) {",
+                  "    pm.collectionVariables.set(\"zaloAppTransId\", jsonData.payment.gatewayTxnCode);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "3.3 [Mock Nội bộ] Giả lập Thanh toán Thành công",
@@ -267,8 +321,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/payments/process",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "payments", "process"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "process"
+              ]
             },
             "description": "Giả lập trễ mạng 200ms và kích hoạt gói thành công ngay trong DB (không gọi ra cổng ngoài)."
           }
@@ -299,8 +359,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/payments/process",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "payments", "process"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "process"
+              ]
             },
             "description": "Giả lập tình huống lỗi thẻ ngân hàng bị từ chối."
           }
@@ -331,8 +397,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/payments/process",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "payments", "process"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "process"
+              ]
             },
             "description": "Bấm gửi 2 lần liên tiếp với cùng một idempotencyKey. Lần 2 sẽ trả về isIdempotent: true mà không trừ tiền lại."
           }
@@ -354,9 +426,114 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/payments/me",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "payments", "me"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "me"
+              ]
             }
+          }
+        },
+        {
+          "name": "3.7 [VNPay Return] Xác thực chữ ký trả về",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/vnpay-return?vnp_ResponseCode=00&vnp_TxnRef=TEST_POSTMAN_001&vnp_SecureHash=INVALID_HASH",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "vnpay-return"
+              ],
+              "query": [
+                {
+                  "key": "vnp_ResponseCode",
+                  "value": "00"
+                },
+                {
+                  "key": "vnp_TxnRef",
+                  "value": "TEST_POSTMAN_001"
+                },
+                {
+                  "key": "vnp_SecureHash",
+                  "value": "INVALID_HASH"
+                }
+              ]
+            },
+            "description": "Kiểm tra endpoint xác thực chữ ký HMAC-SHA512 khi VNPay redirect về (thay bằng chuỗi query thật từ VNPay Sandbox để kích hoạt gói)."
+          }
+        },
+        {
+          "name": "3.8 [ZaloPay Return] Đối soát trạng thái đơn (/v2/query)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get(\"zaloAppTransId\")) {",
+                  "    pm.collectionVariables.set(\"zaloAppTransId\", \"261124_TEST_000000\");",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/zalopay-return?apptransid={{zaloAppTransId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "zalopay-return"
+              ],
+              "query": [
+                {
+                  "key": "apptransid",
+                  "value": "{{zaloAppTransId}}"
+                }
+              ]
+            },
+            "description": "Truy vấn trực tiếp máy chủ ZaloPay Sandbox /v2/query (HMAC-SHA256) theo apptransid để xác thực giao dịch và kích hoạt gói."
+          }
+        },
+        {
+          "name": "3.9 [ZaloPay Callback] Webhook IPN",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"data\": \"{}\",\n  \"mac\": \"invalid_mac\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/zalopay-callback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "zalopay-callback"
+              ]
+            },
+            "description": "Webhook nhận callback từ ZaloPay server (kiểm tra chữ ký HMAC-SHA256 theo Key2)."
           }
         }
       ]

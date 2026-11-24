@@ -13,6 +13,7 @@ import {
 } from '../../api/membershipPlansApi';
 import { branchesApi, type BranchApiDto } from '../../api/branchesApi';
 import { ptApi, type ApiPtBalanceDto } from '../../api/ptApi';
+import { emitAppDataChanged } from '../../api/notificationsApi';
 import { getAuthToken, isApiNetworkError } from '../../api/apiClient';
 import type { MembershipPlan, PTPlan, PaymentMethod } from '../../types';
 
@@ -162,50 +163,59 @@ export function MemberMemberships() {
     ? apiFreezes.filter((f) => f.status.toLowerCase() === 'pending').length
     : freezes.filter((f) => f.status === 'pending').length;
 
-  const doApiPay = async (method: PaymentMethod, success: boolean) => {
+  const doApiPay = async (method: PaymentMethod) => {
     if (!apiPay) return;
     try {
-      const res = apiPay.retryId
-        ? await membershipPlansApi.retryPayment(apiPay.retryId, {
-            branchId: apiPay.branchId,
-            paymentMethod: method,
-            simulateSuccess: success,
-          })
-        : await membershipPlansApi.purchase({
-            planId: apiPay.plan.id,
-            branchId: apiPay.branchId,
-            paymentMethod: method,
-            simulateSuccess: success,
-          });
+      let targetMembershipId = apiPay.retryId;
+      if (!targetMembershipId) {
+        const created = await membershipPlansApi.purchase({
+          planId: apiPay.plan.id,
+          branchId: apiPay.branchId,
+          paymentMethod: method === 'vnpay' ? 'VNPay' : 'ZaloPay',
+          simulateSuccess: false,
+          deferPayment: true,
+        });
+        targetMembershipId = created.membership.id;
+      }
 
-      toast(res.message, res.success ? 'success' : 'error');
-      setApiPay(null);
+      const gw = await membershipPlansApi.processGatewayPayment({
+        membershipId: targetMembershipId,
+        method: method === 'vnpay' ? 'VNPAY' : 'ZALOPAY',
+        idempotencyKey: `${method.toUpperCase()}_${targetMembershipId.slice(0, 8)}_${Date.now()}`,
+        useSandbox: true,
+        mockSuccess: true,
+      });
+
+      if (gw.success && gw.paymentUrl) {
+        setApiPay(null);
+        window.location.href = gw.paymentUrl;
+        return;
+      }
+
+      toast(gw.errorMessage || 'Không thể khởi tạo cổng thanh toán bên thứ 3.', 'error');
       await loadFromApi();
-      if (res.success) setTab('mine');
     } catch (err) {
       toast((err as Error).message, 'error');
-      setApiPay(null);
     }
   };
 
-  const doLocalPay = (method: PaymentMethod, success: boolean) => {
+  const doLocalPay = (method: PaymentMethod) => {
     if (!localPay) return;
     act(
       (d) => {
         if (localPay.kind === 'ms') {
           return localPay.retryId
-            ? L.payMembership(d, localPay.retryId, localPay.branchId, method, success)
-            : L.purchaseMembership(d, uid, localPay.plan.id, localPay.branchId, method, success);
+            ? L.payMembership(d, localPay.retryId, localPay.branchId, method, true)
+            : L.purchaseMembership(d, uid, localPay.plan.id, localPay.branchId, method, true);
         }
         return localPay.retryId
-          ? L.payPT(d, localPay.retryId, localPay.branchId, method, success)
-          : L.purchasePT(d, uid, localPay.plan.id, localPay.branchId, method, success);
+          ? L.payPT(d, localPay.retryId, localPay.branchId, method, true)
+          : L.purchasePT(d, uid, localPay.plan.id, localPay.branchId, method, true);
       },
       (ok) => (ok ? 'Thanh toán thành công – gói đã được kích hoạt!' : undefined),
     );
-    if (!success) toast('Thanh toán thất bại – gói chưa được kích hoạt. Bạn có thể thanh toán lại.', 'error');
     setLocalPay(null);
-    if (success) setTab('mine');
+    setTab('mine');
   };
 
   const chooseApiPlan = (plan: ApiMembershipPlanDto) => {
@@ -778,6 +788,7 @@ function FreezeModal({
         });
         toast('Đã gửi yêu cầu freeze, vui lòng chờ lễ tân duyệt', 'success');
         await onSaved();
+        emitAppDataChanged();
         onClose();
       } catch (err) {
         toast((err as Error).message, 'error');

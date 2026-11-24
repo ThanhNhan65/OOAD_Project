@@ -93,6 +93,9 @@ public class BodyMeasurementService : IBodyMeasurementService
         var measurement = await _bodyMeasurementRepository.GetByIdAndMemberIdAsync(measurementId, member.Id, cancellationToken)
             ?? throw new NotFoundException("Không tìm thấy mốc đo chỉ số cơ thể.");
 
+        if (measurement.IsInitial)
+            throw new ValidationException("Không thể xóa mốc chỉ số cơ thể ban đầu (được giữ cố định để làm chuẩn so sánh tiến độ).");
+
         _bodyMeasurementRepository.Delete(measurement);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }

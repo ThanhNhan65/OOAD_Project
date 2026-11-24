@@ -6,6 +6,7 @@ import { Avatar, Badge, Empty, PageHead, Tabs, ReasonModal } from '../../../comp
 import { ptbLabel } from '../../../components/labels';
 import { fmtDateTime, fmtTime, fmtWeekday } from '../../../utils';
 import { ptApi, type ApiTrainerPtRequestDto } from '../../../api/ptApi';
+import { emitAppDataChanged } from '../../../api/notificationsApi';
 import { isApiNetworkError } from '../../../api/apiClient';
 
 export function TrainerRequestsScreen() {
@@ -57,9 +58,13 @@ export function TrainerRequestsScreen() {
       await ptApi.respondPtRequest(bookingId, accept, reason);
       toast(accept ? 'Đã xác nhận lịch hẹn' : 'Đã từ chối và hoàn buổi cho hội viên', 'success');
       await fetchRequests();
-    } catch {
-      // Fallback local state
-      act((d) => L.respondPT(d, bookingId, accept, reason), accept ? 'Đã xác nhận lịch hẹn' : 'Đã từ chối và hoàn buổi cho hội viên');
+      emitAppDataChanged();
+    } catch (err) {
+      if (isApiNetworkError(err)) {
+        act((d) => L.respondPT(d, bookingId, accept, reason), accept ? 'Đã xác nhận lịch hẹn' : 'Đã từ chối và hoàn buổi cho hội viên');
+      } else {
+        toast((err as Error).message, 'error');
+      }
     }
   };
 
@@ -68,8 +73,13 @@ export function TrainerRequestsScreen() {
       await ptApi.completePtSession(bookingId, attended);
       toast(attended ? 'Đã xác nhận hoàn thành buổi tập' : 'Đã ghi nhận vắng mặt', 'success');
       await fetchRequests();
-    } catch {
-      act((d) => L.completePT(d, bookingId, attended), attended ? 'Đã xác nhận hoàn thành buổi tập' : 'Đã ghi nhận vắng mặt');
+      emitAppDataChanged();
+    } catch (err) {
+      if (isApiNetworkError(err)) {
+        act((d) => L.completePT(d, bookingId, attended), attended ? 'Đã xác nhận hoàn thành buổi tập' : 'Đã ghi nhận vắng mặt');
+      } else {
+        toast((err as Error).message, 'error');
+      }
     }
   };
 
@@ -78,8 +88,13 @@ export function TrainerRequestsScreen() {
       await ptApi.cancelPtSessionByTrainer(bookingId, reason);
       toast('Đã hủy lịch và hoàn buổi cho hội viên', 'success');
       await fetchRequests();
-    } catch {
-      act((d) => L.cancelPTByTrainer(d, bookingId, reason), 'Đã hủy lịch và hoàn buổi cho hội viên');
+      emitAppDataChanged();
+    } catch (err) {
+      if (isApiNetworkError(err)) {
+        act((d) => L.cancelPTByTrainer(d, bookingId, reason), 'Đã hủy lịch và hoàn buổi cho hội viên');
+      } else {
+        toast((err as Error).message, 'error');
+      }
     }
   };
 

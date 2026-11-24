@@ -66,6 +66,7 @@ public class EquipmentIssueRepository : IEquipmentIssueRepository
     {
         return await _context.EquipmentIssues
             .Include(i => i.Equipment)
+            .Include(i => i.Reporter)
             .Include(i => i.Logs)
             .FirstOrDefaultAsync(i => i.Id == id, cancellationToken);
     }

@@ -167,7 +167,9 @@ public class ReportService : IReportService
         {
             var ss = sessions.Where(s => s.ClassId == c.Id).ToList();
             var bks = ss.SelectMany(s => s.Bookings).ToList();
-            var booked = bks.Count(b => b.Status != BookingStatus.Cancelled);
+            var booked = bks.Count(b => b.Status != BookingStatus.Cancelled
+                                     && b.Status != BookingStatus.Rejected
+                                     && b.Status != BookingStatus.AutoCancelled);
             var attended = bks.Count(b => b.Status.ToString().Equals("Completed", StringComparison.OrdinalIgnoreCase) ||
                                           b.Status.ToString().Equals("Attended", StringComparison.OrdinalIgnoreCase));
             var cap = c.Capacity > 0 ? c.Capacity : 20;
@@ -200,7 +202,7 @@ public class ReportService : IReportService
             var pt = ptBookings.Where(b => b.Availability!.TrainerId == t.Id).ToList();
             var done = pt.Count(b => b.Status.ToString().Equals("Completed", StringComparison.OrdinalIgnoreCase));
             var noShow = pt.Count(b => b.Status.ToString().Equals("NoShow", StringComparison.OrdinalIgnoreCase));
-            var rejected = pt.Count(b => b.Status == BookingStatus.Cancelled);
+            var rejected = pt.Count(b => b.Status == BookingStatus.Rejected || b.Status == BookingStatus.Cancelled);
             var clsCount = sessions.Count(s => s.TrainerId == t.Id);
             var rv = reviews.Where(r => r.TrainerId == t.Id).ToList();
 

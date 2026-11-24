@@ -16,8 +16,7 @@ public class EquipmentIssueConfiguration : IEntityTypeConfiguration<EquipmentIss
             .IsRequired();
 
         builder.Property(ei => ei.ReportedBy)
-            .HasColumnName("Reported_By")
-            .IsRequired();
+            .HasColumnName("Reported_By");
 
         builder.Property(ei => ei.HandledBy)
             .HasColumnName("Handled_By");

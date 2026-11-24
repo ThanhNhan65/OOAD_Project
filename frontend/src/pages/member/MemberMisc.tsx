@@ -12,6 +12,7 @@ import { MemberCardWidget } from '../../components/member-card';
 import { fmtDate, fmtDateTime, fmtMoney, todayStr, calcBMI, bmiLabel, uid as genId, fmtTime } from '../../utils';
 import { bodyMeasurementsApi, type ApiBodyMeasurementDto } from '../../api/bodyMeasurementsApi';
 import { equipmentsApi } from '../../api/equipmentsApi';
+import { emitAppDataChanged } from '../../api/notificationsApi';
 import { membershipPlansApi, type ApiMembershipDto, type ApiPaymentDto } from '../../api/membershipPlansApi';
 import { checkinsApi, type ApiCheckinDto } from '../../api/checkinsApi';
 import { userService } from '../../api/user.service';
@@ -1333,16 +1334,18 @@ export function MemberPayments() {
               <thead><tr><th>Mã GD</th><th>Thời gian</th><th>Nội dung</th><th>Chi nhánh</th><th>Phương thức</th><th>Số tiền</th><th>Trạng thái</th></tr></thead>
               <tbody>
                 {apiPayments.map((p) => {
-                  const ok = p.status.toLowerCase() === 'completed';
+                  const st = p.status.toLowerCase();
+                  const color = st === 'completed' ? 'green' : st === 'pending' ? 'amber' : 'red';
+                  const label = st === 'completed' ? 'Thành công' : st === 'pending' ? 'Chờ xác nhận' : 'Thất bại';
                   return (
                     <tr key={p.id}>
-                      <td className="small dim" style={{ fontFamily: 'monospace' }}>{(p.gatewayTxnCode || p.id).toUpperCase().slice(0, 16)}</td>
+                      <td className="small dim" style={{ fontFamily: 'monospace' }}>{(p.gatewayTxnCode || p.id).toUpperCase().slice(0, 22)}</td>
                       <td className="small">{fmtDateTime(p.paidAt || p.createdAt)}</td>
                       <td>{p.description}</td>
                       <td className="small">{p.branchName || 'Toàn hệ thống'}</td>
                       <td className="small">{formatPaymentMethod(p.method)}</td>
                       <td className="bold">{fmtMoney(p.amount)}</td>
-                      <td><Badge color={ok ? 'green' : 'red'}>{ok ? 'Thành công' : 'Thất bại'}</Badge></td>
+                      <td><Badge color={color}>{label}</Badge></td>
                     </tr>
                   );
                 })}
@@ -1458,6 +1461,7 @@ export function MemberEquipment() {
       setMsg('Đã gửi phản ánh thành công, cảm ơn bạn!');
       setTab('mine');
       await loadData();
+      emitAppDataChanged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Gửi phản ánh thất bại');
     } finally {

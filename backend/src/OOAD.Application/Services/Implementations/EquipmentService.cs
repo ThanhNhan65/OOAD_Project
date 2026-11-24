@@ -85,18 +85,26 @@ public class EquipmentService : IEquipmentService
         return issues.Select(MapReport);
     }
 
-    public async Task<EquipmentReportDto> CreateReportAsync(Guid userId, CreateEquipmentReportDto dto, CancellationToken ct = default)
+    public async Task<EquipmentReportDto> CreateReportAsync(Guid userId, string userRole, CreateEquipmentReportDto dto, CancellationToken ct = default)
     {
         var eq = await _equipmentRepository.GetByIdAsync(dto.EquipmentId, ct)
             ?? throw new NotFoundException("Thiết bị không tồn tại.");
 
-        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, ct)
-            ?? throw new ValidationException("Chỉ hội viên mới được gửi phản ánh sự cố.");
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, ct);
+        var staff = member == null ? await _staffRepository.GetByUserIdWithUserAsync(userId, ct) : null;
+        var isAdmin = userRole.Equals("ADMIN", StringComparison.OrdinalIgnoreCase);
+
+        if (member == null && staff == null && !isAdmin)
+            throw new ValidationException("Tài khoản không có quyền gửi phản ánh sự cố thiết bị.");
+
+        if (staff != null && staff.BranchId != eq.BranchId)
+            throw new UnauthorizedAccessException("Bạn chỉ có thể ghi nhận sự cố thiết bị tại chi nhánh của mình.");
 
         var issue = new EquipmentIssue
         {
             EquipmentId = eq.Id,
-            ReportedBy = member.Id,
+            ReportedBy = member?.Id,
+            HandledBy = member == null ? staff?.Id : null,
             Description = dto.Description.Trim(),
             Status = IssueStatus.Open,
             CreatedAt = DateTime.UtcNow
@@ -107,10 +115,10 @@ public class EquipmentService : IEquipmentService
         _equipmentRepository.Update(eq);
         await _equipmentIssueRepository.AddAsync(issue, ct);
 
-        // Tự động gửi thông báo cho Lễ tân thuộc chi nhánh có thiết bị hỏng
+        // Tự động gửi thông báo cho Lễ tân thuộc chi nhánh có thiết bị hỏng (trừ người vừa tạo)
         var branchStaffUserIds = await _staffRepository.GetStaffUserIdsByBranchIdAsync(eq.BranchId, ct);
 
-        foreach (var staffUserId in branchStaffUserIds)
+        foreach (var staffUserId in branchStaffUserIds.Where(id => id != userId))
         {
             await _notificationRepository.AddAsync(new Notification
             {
@@ -118,6 +126,8 @@ public class EquipmentService : IEquipmentService
                 Type = "EquipmentIssue",
                 Title = "Phản ánh sự cố thiết bị mới",
                 Content = $"Thiết bị '{eq.Name}' vừa được báo hỏng: {issue.Description}",
+                RefType = "EquipmentIssue",
+                RefId = issue.Id,
                 IsRead = false,
                 CreatedAt = DateTime.UtcNow
             }, ct);
@@ -176,6 +186,30 @@ public class EquipmentService : IEquipmentService
             _ => EquipmentStatus.Broken
         };
 
+        // Gửi thông báo cho hội viên báo hỏng khi sự cố đã được xử lý xong hoặc từ chối
+        if ((nextStatus == IssueStatus.Fixed || nextStatus == IssueStatus.Closed) && issue.ReportedBy.HasValue)
+        {
+            var reporterUserId = issue.Reporter?.UserId
+                ?? (await _memberRepository.GetByIdOrUserIdWithDetailsAsync(issue.ReportedBy.Value, ct))?.UserId;
+
+            if (reporterUserId.HasValue && reporterUserId.Value != Guid.Empty)
+            {
+                var statusLabel = nextStatus == IssueStatus.Fixed ? "đã được khắc phục" : "đã được đóng";
+                var noteInfo = string.IsNullOrWhiteSpace(dto.Note) ? string.Empty : $" Ghi chú: {dto.Note.Trim()}";
+                await _notificationRepository.AddAsync(new Notification
+                {
+                    UserId = reporterUserId.Value,
+                    Type = nextStatus == IssueStatus.Fixed ? "SUCCESS" : "INFO",
+                    Title = "Cập nhật xử lý sự cố thiết bị",
+                    Content = $"Phản ánh sự cố thiết bị '{issue.Equipment.Name}' của bạn {statusLabel}.{noteInfo}",
+                    RefType = "EquipmentIssue",
+                    RefId = issue.Id,
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow
+                }, ct);
+            }
+        }
+
         await _unitOfWork.SaveChangesAsync(ct);
         return MapReport(issue);
     }
@@ -195,7 +229,7 @@ public class EquipmentService : IEquipmentService
         i.Id,
         i.EquipmentId,
         i.Equipment?.BranchId ?? Guid.Empty,
-        i.ReportedBy,
+        i.ReportedBy ?? i.HandledBy ?? Guid.Empty,
         i.Description,
         ToFrontendReportStatus(i.Status),
         i.CreatedAt,

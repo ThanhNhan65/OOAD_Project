@@ -476,16 +476,13 @@ public class CheckinService : ICheckinService
                 $"Gói tập '{currentMembership.Plan.Name}' không hỗ trợ tập chéo tại {branch.Name}.");
         }
 
-        // Bước D: Tự động điểm danh Lớp nhóm / PT 1-kèm-1 trong khung giờ (UC-22)
+        // Bước D: Ghi nhận liên kết Check-in với lịch Lớp nhóm / PT 1-kèm-1 trong khung giờ (chờ HLV điểm danh -> Attended)
         var eligibleBooking = await _bookingRepository.FindEligibleBookingForCheckinAsync(
             member.Id, branch.Id, nowUtc, cancellationToken);
 
         string? attendedSummary = null;
         if (eligibleBooking != null)
         {
-            eligibleBooking.Status = BookingStatus.Attended;
-            _bookingRepository.Update(eligibleBooking);
-
             attendedSummary = eligibleBooking.Type == BookingType.Class && eligibleBooking.ClassSession != null
                 ? $"Lớp {eligibleBooking.ClassSession.GymClass.Name} ({eligibleBooking.ClassSession.StartAt.Add(VietnamOffset):HH:mm})"
                 : "Buổi tập PT 1-kèm-1";
@@ -510,7 +507,7 @@ public class CheckinService : ICheckinService
 
         var saved = await _checkinRepository.GetByIdWithDetailsAsync(checkin.Id, cancellationToken) ?? checkin;
         var successMsg = attendedSummary != null
-            ? $"Check-in thành công! Đã tự động điểm danh: {attendedSummary}."
+            ? $"Check-in thành công! Đã ghi nhận vào cổng cho: {attendedSummary} (chờ HLV xác nhận điểm danh)."
             : $"Check-in thành công tại {branch.Name}. Chúc bạn tập luyện hiệu quả!";
 
         return new CheckinOperationResultDto
