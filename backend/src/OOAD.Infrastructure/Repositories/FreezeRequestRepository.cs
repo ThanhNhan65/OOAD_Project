@@ -45,7 +45,7 @@ public class FreezeRequestRepository : IFreezeRequestRepository
         CancellationToken cancellationToken = default)
     {
         return await _context.FreezeRequests
-            .AsNoTracking()
+            .AsNoTrackingWithIdentityResolution()
             .Include(f => f.Membership).ThenInclude(m => m.Plan)
             .Include(f => f.Membership).ThenInclude(m => m.FreezeRequests)
             .Include(f => f.Handler).ThenInclude(s => s!.User)
@@ -59,7 +59,7 @@ public class FreezeRequestRepository : IFreezeRequestRepository
         CancellationToken cancellationToken = default)
     {
         var query = _context.FreezeRequests
-            .AsNoTracking()
+            .AsNoTrackingWithIdentityResolution()
             .Include(f => f.Membership).ThenInclude(m => m.Plan)
             .Include(f => f.Membership).ThenInclude(m => m.Member).ThenInclude(mb => mb.User)
             .Include(f => f.Membership).ThenInclude(m => m.FreezeRequests)

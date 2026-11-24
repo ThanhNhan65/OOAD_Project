@@ -47,7 +47,7 @@ public class TrainersController : ApiControllerBase
     /// Lấy hồ sơ của HLV đang đăng nhập.
     /// </summary>
     [HttpGet("me")]
-    [Authorize(Roles = "Trainer,Admin")]
+    [Authorize(Roles = "TRAINER,ADMIN,Trainer,Admin")]
     public async Task<ActionResult<TrainerDto>> GetMe(CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
@@ -63,7 +63,7 @@ public class TrainersController : ApiControllerBase
     /// Cập nhật hồ sơ cá nhân HLV (chuyên môn, kinh nghiệm, bio, sđt, chi nhánh).
     /// </summary>
     [HttpPut("me")]
-    [Authorize(Roles = "Trainer,Admin")]
+    [Authorize(Roles = "TRAINER,ADMIN,Trainer,Admin")]
     public async Task<ActionResult<TrainerDto>> UpdateProfile([FromBody] UpdateTrainerProfileRequest request, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
@@ -94,7 +94,7 @@ public class TrainersController : ApiControllerBase
     /// HLV thêm khung giờ rảnh mới (có chặn trùng lịch dạy lớp nhóm).
     /// </summary>
     [HttpPost("availability")]
-    [Authorize(Roles = "Trainer,Admin")]
+    [Authorize(Roles = "TRAINER,ADMIN,Trainer,Admin")]
     public async Task<ActionResult<TrainerAvailabilityDto>> AddAvailability([FromBody] AvailabilityRequest request, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
@@ -109,7 +109,7 @@ public class TrainersController : ApiControllerBase
     /// HLV xóa khung giờ rảnh chưa có học viên đặt.
     /// </summary>
     [HttpDelete("availability/{id:guid}")]
-    [Authorize(Roles = "Trainer,Admin")]
+    [Authorize(Roles = "TRAINER,ADMIN,Trainer,Admin")]
     public async Task<IActionResult> DeleteAvailability(Guid id, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
@@ -124,7 +124,7 @@ public class TrainersController : ApiControllerBase
     /// Lấy toàn bộ lịch làm việc của HLV (bao gồm buổi lớp nhóm và các lịch PT 1-kèm-1).
     /// </summary>
     [HttpGet("my-schedule")]
-    [Authorize(Roles = "Trainer,Admin")]
+    [Authorize(Roles = "TRAINER,ADMIN,Trainer,Admin")]
     public async Task<ActionResult<IEnumerable<TrainerScheduleItemDto>>> GetMySchedule(
         [FromQuery] DateTime? from,
         [FromQuery] DateTime? to,
@@ -204,7 +204,7 @@ public class TrainersController : ApiControllerBase
     /// HLV lấy danh sách yêu cầu đặt lịch PT (Chờ duyệt, Đã xác nhận, Lịch sử).
     /// </summary>
     [HttpGet("me/pt-requests")]
-    [Authorize(Roles = "Trainer,Admin")]
+    [Authorize(Roles = "TRAINER,ADMIN,Trainer,Admin")]
     public async Task<ActionResult<IEnumerable<TrainerPtRequestItemDto>>> GetTrainerPtRequests(CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
@@ -219,7 +219,7 @@ public class TrainersController : ApiControllerBase
     /// HLV xác nhận hoặc từ chối yêu cầu đặt lịch PT.
     /// </summary>
     [HttpPost("pt-requests/{id:guid}/respond")]
-    [Authorize(Roles = "Trainer,Admin")]
+    [Authorize(Roles = "TRAINER,ADMIN,Trainer,Admin")]
     public async Task<IActionResult> RespondPtRequest(Guid id, [FromBody] RespondPtRequest request, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
@@ -234,7 +234,7 @@ public class TrainersController : ApiControllerBase
     /// HLV xác nhận hoàn thành buổi tập PT hoặc ghi nhận vắng mặt.
     /// </summary>
     [HttpPost("pt-requests/{id:guid}/complete")]
-    [Authorize(Roles = "Trainer,Admin")]
+    [Authorize(Roles = "TRAINER,ADMIN,Trainer,Admin")]
     public async Task<IActionResult> CompletePtSession(Guid id, [FromBody] CompletePtRequest request, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
@@ -249,7 +249,7 @@ public class TrainersController : ApiControllerBase
     /// HLV hủy lịch hẹn PT đã xác nhận kèm lý do.
     /// </summary>
     [HttpPost("pt-requests/{id:guid}/cancel")]
-    [Authorize(Roles = "Trainer,Admin")]
+    [Authorize(Roles = "TRAINER,ADMIN,Trainer,Admin")]
     public async Task<IActionResult> CancelPtSessionByTrainer(Guid id, [FromBody] RespondPtRequest request, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();

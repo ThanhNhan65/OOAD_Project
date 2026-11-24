@@ -71,7 +71,7 @@ public class WaitlistEntryRepository : IWaitlistEntryRepository
         CancellationToken cancellationToken = default)
     {
         return await _context.WaitlistEntries
-            .AsNoTracking()
+            .AsNoTrackingWithIdentityResolution()
             .Include(w => w.Member)
                 .ThenInclude(m => m.User)
             .Include(w => w.Member)
@@ -104,7 +104,7 @@ public class WaitlistEntryRepository : IWaitlistEntryRepository
             .Where(w => idList.Contains(w.MemberId) && w.Status == "WAITING");
 
         if (asNoTracking)
-            query = query.AsNoTracking();
+            query = query.AsNoTrackingWithIdentityResolution();
 
         return await query.ToListAsync(cancellationToken);
     }
