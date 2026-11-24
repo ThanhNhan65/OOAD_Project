@@ -9,3 +9,6 @@ export * from './membershipPlansApi';
 export * from './checkinsApi';
 export * from './memberCard.service';
 export * from './trainer.service';
+export * from './ptApi';
+export * from './bodyMeasurementsApi';
+export * from './reviewsApi';

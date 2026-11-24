@@ -21,11 +21,16 @@ public class ExceptionHandlingMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly ILogger<ExceptionHandlingMiddleware> _logger;
+    private readonly IHostEnvironment _env;
 
-    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
+    public ExceptionHandlingMiddleware(
+        RequestDelegate next,
+        ILogger<ExceptionHandlingMiddleware> logger,
+        IHostEnvironment env)
     {
         _next = next;
         _logger = logger;
+        _env = env;
     }
 
     public async Task InvokeAsync(HttpContext context, AppDbContext dbContext)
@@ -66,11 +71,11 @@ public class ExceptionHandlingMiddleware
         catch (Exception ex)
         {
             _logger.LogError(ex, "Đã xảy ra lỗi trong hệ thống: {Message}", ex.Message);
-            await HandleExceptionAsync(context, ex);
+            await HandleExceptionAsync(context, ex, _env.IsDevelopment());
         }
     }
 
-    private static Task HandleExceptionAsync(HttpContext context, Exception exception)
+    private static Task HandleExceptionAsync(HttpContext context, Exception exception, bool isDevelopment)
     {
         context.Response.ContentType = "application/json";
 
@@ -85,6 +90,22 @@ public class ExceptionHandlingMiddleware
         };
 
         context.Response.StatusCode = statusCode;
+        if (statusCode == (int)HttpStatusCode.InternalServerError && isDevelopment)
+        {
+            var detail = exception.InnerException != null
+                ? $"{exception.Message} | Inner: {exception.InnerException.Message}"
+                : exception.Message;
+
+            return context.Response.WriteAsync(JsonSerializer.Serialize(new
+            {
+                statusCode,
+                message,
+                type,
+                detail,
+                exceptionType = exception.GetType().Name
+            }));
+        }
+
         return context.Response.WriteAsync(JsonSerializer.Serialize(new
         {
             statusCode,
@@ -113,13 +134,17 @@ public class JwtAuthenticationHandler : AuthenticationHandler<AuthenticationSche
 
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        string? token = null;
         var authHeader = Request.Headers.Authorization.ToString();
-        if (string.IsNullOrWhiteSpace(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(authHeader) && authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
-            return Task.FromResult(AuthenticateResult.NoResult());
+            token = authHeader["Bearer ".Length..].Trim();
+        }
+        else if (Request.Path.StartsWithSegments("/hubs"))
+        {
+            token = Request.Query["access_token"].FirstOrDefault()?.Trim();
         }
 
-        var token = authHeader["Bearer ".Length..].Trim();
         if (string.IsNullOrWhiteSpace(token))
         {
             return Task.FromResult(AuthenticateResult.NoResult());
@@ -171,10 +196,20 @@ public class JwtAuthenticationHandler : AuthenticationHandler<AuthenticationSche
                 // Xây dựng lại danh sách Claims chuẩn xác hoàn toàn cho .NET Core Authorization
                 var newClaims = new List<Claim>(identity.Claims);
                 
-                // Nếu tìm thấy role nhưng chưa có ClaimTypes.Role chuẩn, ta bổ sung vào
-                if (!string.IsNullOrEmpty(roleValue) && !identity.HasClaim(c => c.Type == ClaimTypes.Role))
+                // Bổ sung cả dạng IN HOA và PascalCase cho ClaimTypes.Role để [Authorize(Roles = "...")] không bị lệch hoa/thường
+                if (!string.IsNullOrEmpty(roleValue))
                 {
-                    newClaims.Add(new Claim(ClaimTypes.Role, roleValue));
+                    var upperRole = roleValue.ToUpperInvariant();
+                    var pascalRole = System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(roleValue.ToLowerInvariant());
+
+                    if (!newClaims.Any(c => c.Type == ClaimTypes.Role && c.Value == upperRole))
+                    {
+                        newClaims.Add(new Claim(ClaimTypes.Role, upperRole));
+                    }
+                    if (!newClaims.Any(c => c.Type == ClaimTypes.Role && c.Value == pascalRole))
+                    {
+                        newClaims.Add(new Claim(ClaimTypes.Role, pascalRole));
+                    }
                 }
 
                 // Tạo lại ClaimsIdentity mới với AuthenticationType rõ ràng và chuẩn Auth của ASP.NET Core

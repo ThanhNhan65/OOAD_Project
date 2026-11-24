@@ -24,6 +24,4 @@ public class User : BaseEntity, IAuditableEntity
     public Trainer? Trainer { get; set; }
     public Staff? Staff { get; set; }
     public ICollection<Notification> Notifications { get; set; } = new List<Notification>();
-    public ICollection<GymRule> CreatedGymRules { get; set; } = new List<GymRule>();
-    public ICollection<SystemSetting> UpdatedSystemSettings { get; set; } = new List<SystemSetting>();
 }

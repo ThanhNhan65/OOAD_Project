@@ -5,7 +5,7 @@ using OOAD.Application.Services.Interfaces;
 
 namespace OOAD.API.Controllers;
 
-[Authorize]
+[Authorize(Roles = "ADMIN,Admin")]
 public class ReportsController : ApiControllerBase
 {
     private readonly IReportService _reportService;

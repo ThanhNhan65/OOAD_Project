@@ -1,11 +1,20 @@
-import { useMemo, useState } from 'react';
-import { Plus, Trash2, ArrowRight, ArrowLeft, Info, CheckCircle2, AlertTriangle, ShieldCheck, Settings } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Plus, Trash2, ArrowRight, ArrowLeft, Info, CheckCircle2, AlertTriangle, ShieldCheck, Settings, RefreshCw } from 'lucide-react';
 import { useApp } from '../../../store/AppContext';
 import * as L from '../../../store/logic';
 import { Badge, Modal, PageHead } from '../../../components/ui';
 import { ptbLabel } from '../../../components/labels';
-import { addDays, todayStr, fmtDate, fmtTime, fmtWeekday } from '../../../utils';
+import { addDays, todayStr, fmtDate, fmtTime, fmtWeekday, toDateStr } from '../../../utils';
 import { GYM_TIME_SLOTS, matchSlotId, getMondayStr, fullDayName, shortDayMonth } from '../../member/MemberBooking';
+import {
+  trainerService,
+  type TrainerAvailabilityItem,
+  type TrainerScheduleItem,
+  type TrainerItem,
+} from '../../../services/trainer.service';
+import { ptApi, type ApiTrainerPtRequestDto } from '../../../api/ptApi';
+import { getAuthToken, isApiNetworkError } from '../../../api/apiClient';
+import { branchesApi, type BranchApiDto } from '../../../api/branchesApi';
 
 const QUICK_TIME_PRESETS = [
   { label: '07:00 (Sáng)', time: '07:00' },
@@ -18,41 +27,102 @@ const QUICK_TIME_PRESETS = [
 ];
 
 export function TrainerAvailabilityScreen() {
-  const { db, user, act } = useApp();
-  const branches = db.branches.filter((b) => user!.trainer?.branchIds.includes(b.id));
+  const { db, user, act, toast } = useApp();
+  const localBranches = db.branches.filter((b) => user!.trainer?.branchIds.includes(b.id));
   const [date, setDate] = useState(addDays(todayStr(), 1));
   const [time, setTime] = useState('08:30');
   const [dur, setDur] = useState(60);
-  const [branch, setBranch] = useState(branches[0]?.id ?? db.branches[0].id);
+  const [branch, setBranch] = useState(localBranches[0]?.id ?? db.branches[0]?.id ?? '');
   const [repeat, setRepeat] = useState(1);
   const [weekIdx, setWeekIdx] = useState(0);
   const [showRuleModal, setShowRuleModal] = useState(false);
 
+  const [apiMode, setApiMode] = useState<boolean>(!!getAuthToken());
+  const [loading, setLoading] = useState<boolean>(false);
+  const [saving, setSaving] = useState<boolean>(false);
+  const [apiProfile, setApiProfile] = useState<TrainerItem | null>(null);
+  const [apiSchedule, setApiSchedule] = useState<TrainerScheduleItem[]>([]);
+  const [apiPtRequests, setApiPtRequests] = useState<ApiTrainerPtRequestDto[]>([]);
+  const [apiBranches, setApiBranches] = useState<BranchApiDto[]>([]);
+
+  const loadFromApi = useCallback(async () => {
+    if (!getAuthToken()) {
+      setApiMode(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const [profile, schedule, reqs, brList] = await Promise.all([
+        trainerService.getMyProfile(),
+        trainerService.getMySchedule(),
+        ptApi.getTrainerPtRequests().catch(() => [] as ApiTrainerPtRequestDto[]),
+        branchesApi.getAll().catch(() => [] as BranchApiDto[]),
+      ]);
+      setApiProfile(profile);
+      setApiSchedule(schedule);
+      setApiPtRequests(reqs);
+      setApiBranches(brList);
+      if (profile.branchId) setBranch(profile.branchId);
+      setApiMode(true);
+    } catch (err) {
+      if (isApiNetworkError(err)) setApiMode(false);
+      else toast((err as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    loadFromApi();
+  }, [loadFromApi]);
+
   const monday = getMondayStr(todayStr(), weekIdx);
   const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
   const now = Date.now();
-  const slots = db.trainerSlots.filter((s) => s.trainerId === user!.id);
-  const sessions = db.sessions.filter(
+
+  const localSlots = db.trainerSlots.filter((s) => s.trainerId === user!.id);
+  const localSessions = db.sessions.filter(
     (s) => s.trainerId === user!.id && s.status !== 'cancelled',
   );
 
-  const selectedBranch = db.branches.find((b) => b.id === branch);
-  const slotsInSelectedDate = slots.filter(
-    (s) => new Date(s.startAt).toLocaleDateString('sv-SE') === date,
-  ).length;
+  const apiSlots: TrainerAvailabilityItem[] = useMemo(
+    () => apiProfile?.availabilities ?? [],
+    [apiProfile],
+  );
+  const apiClassSessions = useMemo(
+    () => apiSchedule.filter((s) => s.type === 'CLASS' && s.status?.toUpperCase() !== 'CANCELLED'),
+    [apiSchedule],
+  );
+
+  const selectedApiBranch = apiBranches.find((b) => b.id === (apiProfile?.branchId || branch));
+  const selectedLocalBranch = db.branches.find((b) => b.id === branch);
+
+  const [openT, closeT] = useMemo(() => {
+    if (apiMode && selectedApiBranch?.operatingHours) {
+      const parts = selectedApiBranch.operatingHours.split(/[-–]/).map((s) => s.trim());
+      return [parts[0] || '05:30', parts[1] || '22:30'];
+    }
+    return [selectedLocalBranch?.openTime || '06:00', selectedLocalBranch?.closeTime || '22:00'];
+  }, [apiMode, selectedApiBranch, selectedLocalBranch]);
+
+  const branchDisplayName = apiMode
+    ? (selectedApiBranch?.name ?? apiProfile?.branchName ?? 'Chi nhánh làm việc')
+    : (selectedLocalBranch?.name ?? 'Chi nhánh');
+
+  const slotsInSelectedDate = useMemo(() => {
+    if (apiMode) {
+      return apiSlots.filter((s) => toDateStr(new Date(s.startAt)) === date).length;
+    }
+    return localSlots.filter((s) => toDateStr(new Date(s.startAt)) === date).length;
+  }, [apiMode, apiSlots, localSlots, date]);
 
   const liveRuleChecks = useMemo(() => {
     const startDt = new Date(`${date}T${time}:00`);
     const endDt = new Date(startDt.getTime() + dur * 60000);
-    const startIso = startDt.toISOString();
-    const endIso = endDt.toISOString();
 
     const startTimeStr = startDt.toTimeString().slice(0, 5);
     const endTimeStr = endDt.toTimeString().slice(0, 5);
-    const sameDay = startDt.toLocaleDateString('sv-SE') === endDt.toLocaleDateString('sv-SE');
-
-    const openT = selectedBranch?.openTime || '06:00';
-    const closeT = selectedBranch?.closeTime || '22:00';
+    const sameDay = toDateStr(startDt) === toDateStr(endDt);
 
     const withinBranchHours = sameDay && startTimeStr >= openT && endTimeStr <= closeT;
     const advanceHours = (startDt.getTime() - Date.now()) / 3600000;
@@ -60,16 +130,14 @@ export function TrainerAvailabilityScreen() {
     const quotaOk = slotsInSelectedDate < 8;
     const durationOk = [45, 60, 90].includes(dur);
 
-    const hasSlotConflict = db.trainerSlots.some(
-      (s) => s.trainerId === user!.id && new Date(s.startAt) < new Date(endIso) && new Date(startIso) < new Date(s.endAt),
-    );
-    const hasClassConflict = db.sessions.some(
-      (s) =>
-        s.trainerId === user!.id &&
-        s.status === 'scheduled' &&
-        new Date(s.startAt) < new Date(endIso) &&
-        new Date(startIso) < new Date(s.endAt),
-    );
+    const hasSlotConflict = apiMode
+      ? apiSlots.some((s) => new Date(s.startAt) < endDt && startDt < new Date(s.endAt))
+      : localSlots.some((s) => new Date(s.startAt) < endDt && startDt < new Date(s.endAt));
+
+    const hasClassConflict = apiMode
+      ? apiClassSessions.some((s) => new Date(s.startAt) < endDt && startDt < new Date(s.endAt))
+      : localSessions.some((s) => s.status === 'scheduled' && new Date(s.startAt) < endDt && startDt < new Date(s.endAt));
+
     const noOverlapOk = !hasSlotConflict && !hasClassConflict;
 
     return {
@@ -83,9 +151,40 @@ export function TrainerAvailabilityScreen() {
       hasClassConflict,
       allValid: withinBranchHours && minAdvanceOk && quotaOk && durationOk && noOverlapOk,
     };
-  }, [date, time, dur, selectedBranch, db.settings.cancelDeadlineHours, slotsInSelectedDate, db.trainerSlots, db.sessions, user]);
+  }, [date, time, dur, openT, closeT, db.settings.cancelDeadlineHours, slotsInSelectedDate, apiMode, apiSlots, localSlots, apiClassSessions, localSessions]);
 
-  const add = () => {
+  const add = async () => {
+    if (apiMode) {
+      setSaving(true);
+      let ok = 0;
+      let lastErr = '';
+      try {
+        for (let i = 0; i < repeat; i++) {
+          const targetDate = addDays(date, i * 7);
+          const startDt = new Date(`${targetDate}T${time}:00`);
+          const endDt = new Date(startDt.getTime() + dur * 60000);
+          try {
+            await trainerService.addAvailability({
+              startAt: startDt.toISOString(),
+              endAt: endDt.toISOString(),
+            });
+            ok++;
+          } catch (e) {
+            lastErr = (e as Error).message;
+            if (repeat === 1) throw e;
+          }
+        }
+        if (ok === 0) throw new Error(lastErr || 'Không thêm được khung giờ nào');
+        toast(`Đã thêm ${ok} khung giờ rảnh (${time} – ${liveRuleChecks.endTimeStr}) thành công`, 'success');
+        await loadFromApi();
+      } catch (err) {
+        toast((err as Error).message, 'error');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
     let ok = 0;
     act(
       (d) => {
@@ -103,15 +202,40 @@ export function TrainerAvailabilityScreen() {
     );
   };
 
+  const removeSlot = async (slotId: string) => {
+    if (apiMode) {
+      try {
+        await trainerService.deleteAvailability(slotId);
+        toast('Đã xóa khung giờ trống', 'info');
+        await loadFromApi();
+      } catch (err) {
+        toast((err as Error).message, 'error');
+      }
+      return;
+    }
+    act((dd) => L.removeSlot(dd, slotId), 'Đã xóa khung giờ');
+  };
+
+  const branchChoices = apiMode
+    ? (selectedApiBranch ? [selectedApiBranch] : apiBranches)
+    : localBranches;
+
   return (
     <>
       <PageHead
         title="Quản Lý Lịch Rảnh & Khung Giờ PT"
         desc="Thiết lập khung giờ huấn luyện 1-kèm-1 theo bộ quy tắc vận hành chuẩn của OOAD."
         actions={
-          <button className="btn sm" onClick={() => setShowRuleModal(true)}>
-            <Info size={15} /> Xem chi tiết 5 quy tắc mở ca
-          </button>
+          <div className="row" style={{ gap: 8 }}>
+            {apiMode && (
+              <button className="btn sm" onClick={loadFromApi} disabled={loading}>
+                <RefreshCw size={14} className={loading ? 'spin' : ''} /> Làm mới
+              </button>
+            )}
+            <button className="btn sm" onClick={() => setShowRuleModal(true)}>
+              <Info size={15} /> Xem chi tiết 5 quy tắc mở ca
+            </button>
+          </div>
         }
       />
 
@@ -172,8 +296,8 @@ export function TrainerAvailabilityScreen() {
             </div>
             <div className="field">
               <label>Chi nhánh làm việc</label>
-              <select className="input" value={branch} onChange={(e) => setBranch(e.target.value)}>
-                {branches.map((b) => (
+              <select className="input" value={branch} onChange={(e) => setBranch(e.target.value)} disabled={apiMode && !!apiProfile?.branchId}>
+                {branchChoices.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.name}
                   </option>
@@ -198,10 +322,10 @@ export function TrainerAvailabilityScreen() {
               className="btn primary"
               onClick={add}
               id="slot-add"
-              disabled={!liveRuleChecks.allValid}
+              disabled={!liveRuleChecks.allValid || saving}
               title={!liveRuleChecks.allValid ? 'Vui lòng điều chỉnh khung giờ thỏa mãn các quy tắc bên phải' : undefined}
             >
-              <Plus size={16} /> Thêm khung giờ rảnh
+              <Plus size={16} /> {saving ? 'Đang lưu...' : 'Thêm khung giờ rảnh'}
             </button>
           </div>
         </div>
@@ -221,7 +345,7 @@ export function TrainerAvailabilityScreen() {
             <div className="row between" style={{ padding: '7px 10px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)' }}>
               <span className="row" style={{ gap: 8 }}>
                 {liveRuleChecks.withinBranchHours ? <CheckCircle2 size={15} color="var(--green)" /> : <AlertTriangle size={15} color="var(--red)" />}
-                <span>Giờ mở cửa {selectedBranch?.name.replace('OOAD ', '')} ({selectedBranch?.openTime}–{selectedBranch?.closeTime})</span>
+                <span>Giờ mở cửa {branchDisplayName} ({openT}–{closeT})</span>
               </span>
               <b style={{ color: liveRuleChecks.withinBranchHours ? 'var(--green)' : 'var(--red)' }}>
                 {liveRuleChecks.withinBranchHours ? 'Đạt' : 'Ngoài giờ'}
@@ -271,8 +395,7 @@ export function TrainerAvailabilityScreen() {
             <div className="card" style={{ padding: 14, borderLeft: '4px solid var(--primary)' }}>
               <b>1. Thời gian hoạt động chi nhánh</b>
               <div className="muted mt8">
-                Khung giờ mở lịch phải nằm hoàn toàn trong thời gian mở cửa của chi nhánh ({selectedBranch?.openTime} –{' '}
-                {selectedBranch?.closeTime}). Không được đặt ca sớm hơn hoặc kết thúc muộn hơn giờ đóng cửa.
+                Khung giờ mở lịch phải nằm hoàn toàn trong thời gian mở cửa của chi nhánh ({openT} – {closeT}). Không được đặt ca sớm hơn hoặc kết thúc muộn hơn giờ đóng cửa.
               </div>
             </div>
             <div className="card" style={{ padding: 14, borderLeft: '4px solid var(--accent)' }}>
@@ -339,7 +462,9 @@ export function TrainerAvailabilityScreen() {
                 </th>
                 {days.map((d) => {
                   const isToday = d === todayStr();
-                  const ptCount = slots.filter((s) => new Date(s.startAt).toLocaleDateString('sv-SE') === d).length;
+                  const ptCount = apiMode
+                    ? apiSlots.filter((s) => toDateStr(new Date(s.startAt)) === d).length
+                    : localSlots.filter((s) => toDateStr(new Date(s.startAt)) === d).length;
                   return (
                     <th
                       key={d}
@@ -378,12 +503,81 @@ export function TrainerAvailabilityScreen() {
                   </td>
                   {days.map((d) => {
                     const isToday = d === todayStr();
-                    const cellClasses = sessions.filter(
+                    if (apiMode) {
+                      const cellApiClasses = apiClassSessions.filter(
+                        (s) => toDateStr(new Date(s.startAt)) === d && matchSlotId(s.startAt) === slotDef.id,
+                      );
+                      const cellApiSlots = apiSlots.filter(
+                        (s) => toDateStr(new Date(s.startAt)) === d && matchSlotId(s.startAt) === slotDef.id,
+                      );
+                      return (
+                        <td key={`${slotDef.id}-${d}`} className={`tkb-data-cell ${isToday ? 'is-today-col' : ''}`}>
+                          {cellApiClasses.map((x) => (
+                            <div
+                              key={x.id}
+                              className="tkb-event"
+                              style={{ ['--ev-color' as string]: '#38bdf8', cursor: 'default' }}
+                            >
+                              <div className="tkb-ev-title">{x.title}</div>
+                              <div className="tkb-ev-line">Lớp nhóm · {branchDisplayName}</div>
+                              {x.room && <div className="tkb-ev-line">Phòng: {x.room}</div>}
+                              <div className="tkb-ev-time">
+                                <span>🕒 {fmtTime(x.startAt)} → {fmtTime(x.endAt)}</span>
+                                <span className="tkb-ev-tag">Lớp dạy</span>
+                              </div>
+                            </div>
+                          ))}
+                          {cellApiSlots.map((sl) => {
+                            const req = apiPtRequests.find(
+                              (r) =>
+                                new Date(r.startAt).getTime() === new Date(sl.startAt).getTime() &&
+                                ['pending', 'confirmed', 'attended'].includes(r.status.toLowerCase()),
+                            );
+                            const isBooked = sl.isBooked || !!req;
+                            const canDelete = !isBooked && new Date(sl.startAt).getTime() > now;
+                            const stKey = req?.status.toLowerCase() as keyof typeof ptbLabel | undefined;
+                            return (
+                              <div
+                                key={sl.id}
+                                className={`tkb-event ${isBooked ? 'is-pt' : 'is-mine'}`}
+                                style={{ cursor: 'default' }}
+                              >
+                                <div className="row between">
+                                  <div className="tkb-ev-title">
+                                    {req ? `PT: ${req.memberName}` : isBooked ? 'Ca PT đã có học viên' : 'Ca PT Mở Trống'}
+                                  </div>
+                                  {canDelete && (
+                                    <button
+                                      type="button"
+                                      className="btn ghost sm"
+                                      style={{ padding: '2px 4px', height: 'auto', color: '#f87171' }}
+                                      onClick={() => removeSlot(sl.id)}
+                                      title="Xóa khung giờ trống"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  )}
+                                </div>
+                                <div className="tkb-ev-line">Cơ sở: {branchDisplayName}</div>
+                                <div className="tkb-ev-time">
+                                  <span>🕒 {fmtTime(sl.startAt)} → {fmtTime(sl.endAt)}</span>
+                                  <span className="tkb-ev-tag">
+                                    {req ? (ptbLabel[stKey!]?.[0] ?? req.status) : isBooked ? 'Đã đặt' : 'Trống'}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </td>
+                      );
+                    }
+
+                    const cellClasses = localSessions.filter(
                       (s) => s.date === d && matchSlotId(s.startAt) === slotDef.id,
                     );
-                    const cellSlots = slots.filter(
+                    const cellSlots = localSlots.filter(
                       (s) =>
-                        new Date(s.startAt).toLocaleDateString('sv-SE') === d &&
+                        toDateStr(new Date(s.startAt)) === d &&
                         matchSlotId(s.startAt) === slotDef.id,
                     );
 
@@ -432,7 +626,7 @@ export function TrainerAvailabilityScreen() {
                                     type="button"
                                     className="btn ghost sm"
                                     style={{ padding: '2px 4px', height: 'auto', color: '#f87171' }}
-                                    onClick={() => act((dd) => L.removeSlot(dd, sl.id), 'Đã xóa khung giờ')}
+                                    onClick={() => removeSlot(sl.id)}
                                     title="Xóa khung giờ trống"
                                   >
                                     <Trash2 size={12} />

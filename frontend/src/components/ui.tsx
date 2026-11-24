@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { X, CheckCircle2, AlertTriangle, Info, XCircle, Inbox, Star, CreditCard, Wallet, Landmark, Smartphone, Loader2, ShieldCheck } from 'lucide-react';
+import { X, CheckCircle2, AlertTriangle, Info, XCircle, Inbox, Star, CreditCard, Wallet, Loader2, ShieldCheck } from 'lucide-react';
 import { useApp } from '../store/AppContext';
 import { initials, fmtMoney } from '../utils';
 import type { PaymentMethod, User } from '../types';
@@ -165,23 +165,41 @@ export function FakeQR({ text, size = 140 }: { text: string; size?: number }) {
   );
 }
 
-/* ---------------- Payment gateway mô phỏng ---------------- */
-const METHODS: { id: PaymentMethod; name: string; icon: ReactNode; color: string }[] = [
-  { id: 'momo', name: 'Ví MoMo', icon: <Smartphone size={20} />, color: '#d82d8b' },
-  { id: 'vnpay', name: 'VNPay QR', icon: <Wallet size={20} />, color: '#0a6ebd' },
-  { id: 'card', name: 'Thẻ Visa/Master', icon: <CreditCard size={20} />, color: '#7c5cff' },
-  { id: 'banking', name: 'Internet Banking', icon: <Landmark size={20} />, color: '#00a37a' },
+/* ---------------- Payment gateway bên thứ 3 (VNPay & ZaloPay) ---------------- */
+const METHODS: { id: PaymentMethod; name: string; desc: string; icon: ReactNode; color: string }[] = [
+  { id: 'vnpay', name: 'VNPay', desc: 'Cổng thanh toán VNPay Sandbox (Thẻ ATM / QR / NCB)', icon: <CreditCard size={20} />, color: '#0a6ebd' },
+  { id: 'ZaloPay', name: 'Ví ZaloPay', desc: 'Cổng thanh toán ZaloPay Sandbox v2 (Ví / Mã QR)', icon: <Wallet size={20} />, color: '#0068ff' },
 ];
 
-export function PaymentModal({ title, amount, lines, onClose, onPay }: { title: string; amount: number; lines?: [string, string][]; onClose: () => void; onPay: (method: PaymentMethod, success: boolean) => void }) {
-  const [method, setMethod] = useState<PaymentMethod>('momo');
-  const [processing, setProcessing] = useState<null | boolean>(null);
-  const go = (success: boolean) => {
-    setProcessing(success);
-    setTimeout(() => onPay(method, success), 1100);
+export function PaymentModal({
+  title,
+  amount,
+  lines,
+  onClose,
+  onPay,
+}: {
+  title: string;
+  amount: number;
+  lines?: [string, string][];
+  onClose: () => void;
+  onPay: (method: PaymentMethod) => Promise<void> | void;
+}) {
+  const [method, setMethod] = useState<PaymentMethod>('vnpay');
+  const [processing, setProcessing] = useState(false);
+
+  const selected = METHODS.find((m) => m.id === method) ?? METHODS[0];
+
+  const handlePay = async () => {
+    setProcessing(true);
+    try {
+      await onPay(method);
+    } finally {
+      setProcessing(false);
+    }
   };
+
   return (
-    <Modal title="Thanh toán online" onClose={onClose}>
+    <Modal title="Thanh toán trực tuyến" onClose={processing ? () => {} : onClose}>
       <div className="card" style={{ background: 'rgba(124,92,255,.08)' }}>
         <div className="small muted">Đơn hàng</div>
         <h3 className="mt8">{title}</h3>
@@ -199,24 +217,32 @@ export function PaymentModal({ title, amount, lines, onClose, onPay }: { title: 
           </span>
         </div>
       </div>
-      <div className="small muted mt16 mb16 bold">Chọn phương thức</div>
+      <div className="small muted mt16 mb16 bold">Chọn cổng thanh toán bên thứ 3</div>
       <div className="grid g2" style={{ gap: 10 }}>
         {METHODS.map((m) => (
-          <button key={m.id} id={`pay-${m.id}`} className={`slot-btn ${method === m.id ? 'on' : ''}`} onClick={() => setMethod(m.id)} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button
+            key={m.id}
+            id={`pay-${m.id}`}
+            className={`slot-btn ${method === m.id ? 'on' : ''}`}
+            onClick={() => setMethod(m.id)}
+            disabled={processing}
+            style={{ display: 'flex', gap: 10, alignItems: 'center', textAlign: 'left' }}
+          >
             <span style={{ color: m.color }}>{m.icon}</span>
-            {m.name}
+            <div>
+              <div className="bold">{m.name}</div>
+              <div className="small dim" style={{ fontSize: 11 }}>{m.desc}</div>
+            </div>
           </button>
         ))}
       </div>
-      <div className="row small dim mt16">
-        <ShieldCheck size={16} /> Môi trường demo – chọn kết quả giao dịch để mô phỏng cổng thanh toán.
-      </div>
       <div className="row mt16">
-        <button className="btn danger grow" disabled={processing !== null} onClick={() => go(false)} id="pay-fail">
-          {processing === false ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <XCircle size={16} />} Mô phỏng thất bại
+        <button className="btn" disabled={processing} onClick={onClose}>
+          Hủy
         </button>
-        <button className="btn primary grow" disabled={processing !== null} onClick={() => go(true)} id="pay-success">
-          {processing === true ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <CheckCircle2 size={16} />} Thanh toán {fmtMoney(amount)}
+        <button className="btn primary grow" disabled={processing} onClick={handlePay} id="pay-success">
+          {processing ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <CheckCircle2 size={16} />}
+          {processing ? `Đang kết nối ${selected.name}...` : `Thanh toán qua ${selected.name} · ${fmtMoney(amount)}`}
         </button>
       </div>
     </Modal>

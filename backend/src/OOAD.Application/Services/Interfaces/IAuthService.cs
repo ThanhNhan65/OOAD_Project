@@ -12,5 +12,7 @@ public interface IAuthService
     Task<IReadOnlyList<UserDto>> GetAllUsersAsync(string? role = null, string? search = null, CancellationToken cancellationToken = default);
     Task<UserDto> CreateStaffAsync(CreateStaffRequest request, CancellationToken cancellationToken = default);
     Task<UserDto> UpdateUserStatusAsync(Guid targetUserId, UpdateUserStatusRequest request, Guid? currentUserId = null, CancellationToken cancellationToken = default);
+    Task<UserDto> UpdateUserByAdminAsync(Guid targetUserId, UpdateUserAdminRequest request, CancellationToken cancellationToken = default);
+    Task<UserDto> ResetUserPasswordAsync(Guid targetUserId, ResetUserPasswordRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<MemberDto>> SearchMembersAsync(string? search = null, CancellationToken cancellationToken = default);
 }

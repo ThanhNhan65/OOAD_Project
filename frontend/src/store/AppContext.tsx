@@ -1,55 +1,95 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { DB, User } from '../types';
-import { createSeed } from './seed';
-import { runScheduler, ensureMemberCards } from './logic';
+import { getAuthToken, setAuthToken } from '../api/apiClient';
+import { userService } from '../api/user.service';
+import type { ApiUserDto } from '../api/auth.service';
 
-const KEY = 'ooad_db_v2_hcm';
-const SESSION_KEY = 'ooad_session_v1';
+const LEGACY_DB_KEY = 'ooad_db_v4_hcm';
+const LEGACY_SESSION_KEY = 'ooad_session_v1';
+const API_USER_KEY = 'ooad_api_user';
+const THEME_KEY = 'ooad_theme';
 
-function load(): DB {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as DB;
-      // Tự động bổ sung số đo 3 vòng và ghi chú cho dữ liệu localStorage cũ nếu chưa có
-      const m1Notes = [
-        'Khởi điểm: Đo InBody lần đầu, bắt đầu lộ trình giảm mỡ tăng cơ',
-        'Tuần 2: Quen nhịp cardio & cắt nước ngọt có gas',
-        'Tuần 4: Tăng mức tạ Squat & Deadlift thêm 10kg',
-        'Tuần 6: Giảm rõ mỡ vùng bụng, cơ ngực bắt đầu dày hơn',
-        'Tuần 8: Duy trì ăn giàu đạm 155g/ngày theo gợi ý AI',
-        'Tuần 10: Thể lực bền bỉ, hoàn thành HIIT 45 phút không hụt hơi',
-        'Tuần 11: Siết nét cơ vai & lưng xô, vòng eo giảm gần 8cm',
-        'Hiện tại: Đạt mốc dưới 20% mỡ cơ thể, chuẩn bị chu kỳ Lean Bulk',
-      ];
-      let m1Idx = 0;
-      parsed.bodyMetrics?.forEach((bm) => {
-        if (bm.memberId === 'm1') {
-          if (bm.chest === undefined) bm.chest = +(96 + m1Idx * 0.55).toFixed(1);
-          if (bm.waist === undefined) bm.waist = +(88.5 - m1Idx * 1.25).toFixed(1);
-          if (bm.hips === undefined) bm.hips = +(97.5 - m1Idx * 0.28).toFixed(1);
-          if (!bm.note || bm.note === 'Lần đo đầu tiên') {
-            bm.note = m1Notes[m1Idx] || 'Đo định kỳ tại phòng tập';
+const EMPTY_DB: DB = {
+  version: 5,
+  users: [],
+  branches: [],
+  equipment: [],
+  equipmentReports: [],
+  membershipPlans: [],
+  ptPlans: [],
+  memberships: [],
+  ptPackages: [],
+  freezeRequests: [],
+  payments: [],
+  classes: [],
+  sessions: [],
+  classBookings: [],
+  trainerSlots: [],
+  ptBookings: [],
+  checkins: [],
+  bodyMetrics: [],
+  reviews: [],
+  notifications: [],
+  memberCards: [],
+  settings: {
+    reminderHours: 2,
+    cancelDeadlineHours: 4,
+    waitlistCutoffHours: 8,
+    expiryWarningDays: 7,
+    ptLowSessions: 2,
+  },
+};
+
+export function mapApiUserToAppUser(apiUser: ApiUserDto, existing?: Partial<User>): User {
+  return {
+    id: apiUser.id,
+    role: apiUser.role,
+    email: apiUser.email,
+    password: '',
+    fullName: apiUser.fullName,
+    phone: apiUser.phone ?? existing?.phone ?? '',
+    gender: (apiUser.gender as User['gender']) || existing?.gender || 'male',
+    dob: apiUser.dateOfBirth ? apiUser.dateOfBirth.slice(0, 10) : (existing?.dob ?? '1998-01-01'),
+    address: apiUser.address ?? existing?.address ?? '',
+    avatarColor: existing?.avatarColor ?? '#7c5cff',
+    locked: apiUser.locked || apiUser.status === 'LOCKED',
+    createdAt: apiUser.createdAt || existing?.createdAt || new Date().toISOString(),
+    memberId: apiUser.memberId ?? existing?.memberId,
+    branchId: apiUser.branchId ?? existing?.branchId,
+    branchName: apiUser.branchName ?? existing?.branchName,
+    cardCode: apiUser.cardCode ?? existing?.cardCode,
+    cardStatus: existing?.cardStatus ?? 'ACTIVE',
+    trainer:
+      apiUser.role === 'trainer'
+        ? {
+            specialties: (apiUser.specialty || 'Gym, Fitness')
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean),
+            experienceYears: apiUser.experienceYears ?? existing?.trainer?.experienceYears ?? 0,
+            certifications: existing?.trainer?.certifications ?? ['HLV DFGymCenter'],
+            bio: apiUser.bio ?? existing?.trainer?.bio ?? '',
+            branchIds: apiUser.branchId ? [apiUser.branchId] : existing?.trainer?.branchIds ?? [],
           }
-          m1Idx++;
-        } else if (bm.chest === undefined) {
-          bm.chest = 86;
-          bm.waist = 70;
-          bm.hips = 93;
-        }
-      });
-      ensureMemberCards(parsed);
-      return parsed;
+        : undefined,
+  };
+}
+
+function loadStoredApiUser(): User | null {
+  if (!getAuthToken()) return null;
+  try {
+    const raw = localStorage.getItem(API_USER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<User> & Partial<ApiUserDto>;
+    if (!parsed || !parsed.id || !parsed.role) return null;
+    if ('status' in parsed && !('avatarColor' in parsed)) {
+      return mapApiUserToAppUser(parsed as ApiUserDto);
     }
+    return parsed as User;
   } catch {
-    /* ignore */
+    return null;
   }
-  const db = createSeed();
-  ensureMemberCards(db);
-  runScheduler(db);
-  localStorage.setItem(KEY, JSON.stringify(db));
-  return db;
 }
 
 export interface Toast {
@@ -61,11 +101,10 @@ export interface Toast {
 interface Ctx {
   db: DB;
   user: User | null;
-  /** Áp dụng thay đổi lên bản sao DB; ném lỗi -> hiện toast lỗi, trả về undefined */
   act: <T>(fn: (draft: DB) => T, successMsg?: string | ((r: T) => string | undefined)) => T | undefined;
   login: (u: User) => void;
   logout: () => void;
-  reset: () => void;
+  updateCurrentUser: (patch: Partial<User>) => void;
   toast: (message: string, type?: Toast['type']) => void;
   toasts: Toast[];
   theme: 'light' | 'dark';
@@ -75,28 +114,50 @@ interface Ctx {
 const AppCtx = createContext<Ctx>(null as unknown as Ctx);
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [db, setDb] = useState<DB>(load);
-  const [userId, setUserId] = useState<string | null>(() => localStorage.getItem(SESSION_KEY));
+  const [user, setUser] = useState<User | null>(() => loadStoredApiUser());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    return (localStorage.getItem('ooad_theme') as 'light' | 'dark') || 'light';
+    return (localStorage.getItem(THEME_KEY) as 'light' | 'dark') || 'light';
   });
-  const dbRef = useRef(db);
-  dbRef.current = db;
+
+  useEffect(() => {
+    // Dọn triệt để dữ liệu seed/mock cũ khỏi localStorage
+    localStorage.removeItem(LEGACY_DB_KEY);
+    localStorage.removeItem(LEGACY_SESSION_KEY);
+  }, []);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('ooad_theme', theme);
+    localStorage.setItem(THEME_KEY, theme);
   }, [theme]);
+
+  // Đồng bộ hồ sơ mới nhất từ API nếu đang có JWT
+  useEffect(() => {
+    if (!getAuthToken()) return;
+    let cancelled = false;
+    userService
+      .getMe()
+      .then((apiUser) => {
+        if (cancelled) return;
+        setUser((prev) => {
+          const updated = mapApiUserToAppUser(apiUser, prev ?? undefined);
+          localStorage.setItem(API_USER_KEY, JSON.stringify(updated));
+          return updated;
+        });
+      })
+      .catch(() => {
+        if (!cancelled && !getAuthToken()) {
+          localStorage.removeItem(API_USER_KEY);
+          setUser(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
-  }, []);
-
-  const commit = useCallback((next: DB) => {
-    dbRef.current = next;
-    setDb(next);
-    localStorage.setItem(KEY, JSON.stringify(next));
   }, []);
 
   const toast = useCallback((message: string, type: Toast['type'] = 'success') => {
@@ -107,10 +168,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const act = useCallback(
     <T,>(fn: (draft: DB) => T, successMsg?: string | ((r: T) => string | undefined)) => {
-      const draft = structuredClone(dbRef.current);
+      const draft = structuredClone(EMPTY_DB);
       try {
         const res = fn(draft);
-        commit(draft);
         const msg = typeof successMsg === 'function' ? successMsg(res) : successMsg;
         if (msg) toast(msg, 'success');
         return res;
@@ -119,48 +179,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return undefined;
       }
     },
-    [commit, toast],
+    [toast],
   );
 
-  // tác vụ nền mô phỏng: nhắc lịch, hết hạn waitlist, auto check-out...
-  useEffect(() => {
-    const tick = () => {
-      const draft = structuredClone(dbRef.current);
-      const before = JSON.stringify(draft);
-      runScheduler(draft);
-      if (JSON.stringify(draft) !== before) commit(draft);
-    };
-    tick();
-    const t = setInterval(tick, 60000);
-    return () => clearInterval(t);
-  }, [commit]);
+  const login = useCallback((u: User) => {
+    localStorage.setItem(API_USER_KEY, JSON.stringify(u));
+    setUser(u);
+  }, []);
 
-  const user = useMemo(() => db.users.find((u) => u.id === userId) ?? null, [db.users, userId]);
+  const logout = useCallback(() => {
+    localStorage.removeItem(LEGACY_SESSION_KEY);
+    localStorage.removeItem(LEGACY_DB_KEY);
+    localStorage.removeItem(API_USER_KEY);
+    setAuthToken(null);
+    setUser(null);
+  }, []);
+
+  const updateCurrentUser = useCallback((patch: Partial<User>) => {
+    setUser((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...patch };
+      localStorage.setItem(API_USER_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
   const value: Ctx = {
-    db,
+    db: EMPTY_DB,
     user,
     act,
+    login,
+    logout,
+    updateCurrentUser,
     toast,
     toasts,
     theme,
     toggleTheme,
-    login: (u) => {
-      localStorage.setItem(SESSION_KEY, u.id);
-      setUserId(u.id);
-    },
-    logout: () => {
-      localStorage.removeItem(SESSION_KEY);
-      setUserId(null);
-    },
-    reset: () => {
-      const fresh = createSeed();
-      ensureMemberCards(fresh);
-      runScheduler(fresh);
-      commit(fresh);
-      toast('Đã khôi phục dữ liệu demo ban đầu', 'info');
-    },
   };
+
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
 

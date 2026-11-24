@@ -1,19 +1,50 @@
-using Microsoft.EntityFrameworkCore;
-using OOAD.Application.Common.Interfaces;
 using OOAD.Application.DTOs.Report;
 using OOAD.Application.Services.Interfaces;
 using OOAD.Domain.Enums;
+using OOAD.Domain.Interfaces;
 
 namespace OOAD.Application.Services.Implementations;
 
 public class ReportService : IReportService
 {
-    private readonly IAppDbContext _context;
-    private static readonly string[] Palette = new string[] { "#7c5cff", "#ff5c8a", "#00d1b2", "#ffb020", "#3fa9ff", "#a259ff", "#2ed47a" };
-
-    public ReportService(IAppDbContext context)
+    private static readonly string[] Palette = new string[]
     {
-        _context = context;
+        "#7c5cff", "#ff5c8a", "#00d1b2", "#ffb020", "#3fa9ff", "#a259ff", "#2ed47a"
+    };
+
+    private readonly IBranchRepository _branchRepository;
+    private readonly IPaymentRepository _paymentRepository;
+    private readonly IMembershipRepository _membershipRepository;
+    private readonly IMemberRepository _memberRepository;
+    private readonly ICheckinRepository _checkinRepository;
+    private readonly IGymClassRepository _gymClassRepository;
+    private readonly IClassSessionRepository _classSessionRepository;
+    private readonly IReviewRepository _reviewRepository;
+    private readonly ITrainerRepository _trainerRepository;
+    private readonly IBookingRepository _bookingRepository;
+
+    public ReportService(
+        IBranchRepository branchRepository,
+        IPaymentRepository paymentRepository,
+        IMembershipRepository membershipRepository,
+        IMemberRepository memberRepository,
+        ICheckinRepository checkinRepository,
+        IGymClassRepository gymClassRepository,
+        IClassSessionRepository classSessionRepository,
+        IReviewRepository reviewRepository,
+        ITrainerRepository trainerRepository,
+        IBookingRepository bookingRepository)
+    {
+        _branchRepository = branchRepository;
+        _paymentRepository = paymentRepository;
+        _membershipRepository = membershipRepository;
+        _memberRepository = memberRepository;
+        _checkinRepository = checkinRepository;
+        _gymClassRepository = gymClassRepository;
+        _classSessionRepository = classSessionRepository;
+        _reviewRepository = reviewRepository;
+        _trainerRepository = trainerRepository;
+        _bookingRepository = bookingRepository;
     }
 
     public async Task<ReportOverviewDto> GetOverviewAsync(
@@ -30,34 +61,17 @@ public class ReportService : IReportService
             .Select(i => new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(-(months - 1 - i)))
             .ToList();
 
-        var branches = await _context.Branches.AsNoTracking().ToListAsync(cancellationToken);
+        var branches = await _branchRepository.GetAllAsync(cancellationToken);
 
         // 1. Payments (Completed)
-        var paymentsQuery = _context.Payments
-            .AsNoTracking()
-            .Include(p => p.Membership).ThenInclude(m => m.Plan)
-            .Include(p => p.Membership).ThenInclude(m => m.Member).ThenInclude(mb => mb.User)
-            .Where(p => p.Status == PaymentStatus.Completed);
-
-        if (branchId.HasValue)
-            paymentsQuery = paymentsQuery.Where(p => p.Membership.BranchId == branchId.Value);
-
-        var payments = await paymentsQuery.OrderByDescending(p => p.CreatedAt).ToListAsync(cancellationToken);
+        var payments = await _paymentRepository.GetCompletedWithDetailsAsync(branchId, cancellationToken);
 
         // 2. Memberships
-        var msQuery = _context.Memberships
-            .AsNoTracking()
-            .Include(m => m.Plan)
-            .AsQueryable();
-
-        if (branchId.HasValue)
-            msQuery = msQuery.Where(m => m.BranchId == branchId.Value);
-
-        var memberships = await msQuery.ToListAsync(cancellationToken);
+        var memberships = await _membershipRepository.GetAllWithPlanAsync(branchId, cancellationToken);
 
         var memberIds = branchId.HasValue
             ? memberships.Select(m => m.MemberId).Distinct().ToHashSet()
-            : (await _context.Members.AsNoTracking().Select(m => m.Id).ToListAsync(cancellationToken)).ToHashSet();
+            : (await _memberRepository.GetAllIdsAsync(cancellationToken)).ToHashSet();
 
         bool ActiveOn(Guid memberId, DateTime date) =>
             memberships.Any(m => m.MemberId == memberId && m.StartDate.Date <= date && date <= m.EndDate.Date);
@@ -118,8 +132,8 @@ public class ReportService : IReportService
             .ToList();
 
         // 6. Check-in & Đang có mặt
-        var checkinsQuery = _context.Checkins.AsNoTracking().AsQueryable();
-        var allOpenCheckins = await checkinsQuery.Where(c => c.CheckOutAt == null).ToListAsync(cancellationToken);
+        var allCheckins = await _checkinRepository.GetAllByBranchAsync(branchId: null, cancellationToken);
+        var allOpenCheckins = allCheckins.Where(c => c.CheckOutAt == null).ToList();
 
         var branchPresences = branches.Select(b => new BranchPresenceDto(
             b.Id,
@@ -129,8 +143,8 @@ public class ReportService : IReportService
         )).ToList();
 
         var filteredCheckins = branchId.HasValue
-            ? await checkinsQuery.Where(c => c.BranchId == branchId.Value).ToListAsync(cancellationToken)
-            : await checkinsQuery.ToListAsync(cancellationToken);
+            ? allCheckins.Where(c => c.BranchId == branchId.Value).ToList()
+            : allCheckins.ToList();
 
         var visits = monthStarts.Select(ms =>
         {
@@ -140,30 +154,22 @@ public class ReportService : IReportService
         }).ToList();
 
         var hours = Enumerable.Range(5, 18).Select(h => new HourlyCheckinDto(
-        $"{h}h",
-        filteredCheckins.Count(c => c.CheckInAt.ToLocalTime().Hour == h)
-         )).ToList();
+            $"{h}h",
+            filteredCheckins.Count(c => c.CheckInAt.ToLocalTime().Hour == h)
+        )).ToList();
 
         // 7. Lớp học
-        var classesQuery = _context.Classes.AsNoTracking().Include(c => c.Branch).AsQueryable();
-        if (branchId.HasValue) classesQuery = classesQuery.Where(c => c.BranchId == branchId.Value);
-        var gymClasses = await classesQuery.ToListAsync(cancellationToken);
-
-        var sessions = await _context.ClassSessions
-            .AsNoTracking()
-            .Include(s => s.Bookings)
-            .Include(s => s.WaitlistEntries)
-            .Include(s => s.Trainer).ThenInclude(t => t.User)
-            .Where(s => s.StartAt < now && s.Status != "CANCELLED")
-            .ToListAsync(cancellationToken);
-
-        var reviews = await _context.Reviews.AsNoTracking().ToListAsync(cancellationToken);
+        var gymClasses = await _gymClassRepository.GetAllWithBranchAsync(branchId, cancellationToken);
+        var sessions = await _classSessionRepository.GetPastNonCancelledWithDetailsAsync(now, cancellationToken);
+        var reviews = await _reviewRepository.GetAllAsync(cancellationToken);
 
         var classReports = gymClasses.Select(c =>
         {
             var ss = sessions.Where(s => s.ClassId == c.Id).ToList();
             var bks = ss.SelectMany(s => s.Bookings).ToList();
-            var booked = bks.Count(b => b.Status != BookingStatus.Cancelled);
+            var booked = bks.Count(b => b.Status != BookingStatus.Cancelled
+                                     && b.Status != BookingStatus.Rejected
+                                     && b.Status != BookingStatus.AutoCancelled);
             var attended = bks.Count(b => b.Status.ToString().Equals("Completed", StringComparison.OrdinalIgnoreCase) ||
                                           b.Status.ToString().Equals("Attended", StringComparison.OrdinalIgnoreCase));
             var cap = c.Capacity > 0 ? c.Capacity : 20;
@@ -188,23 +194,15 @@ public class ReportService : IReportService
         }).ToList();
 
         // 8. Huấn luyện viên
-        var trainers = await _context.Trainers
-            .AsNoTracking()
-            .Include(t => t.User)
-            .ToListAsync(cancellationToken);
-
-        var ptBookings = await _context.Bookings
-            .AsNoTracking()
-            .Include(b => b.Availability)
-            .Where(b => b.Type != BookingType.Class && b.Availability != null)
-            .ToListAsync(cancellationToken);
+        var trainers = await _trainerRepository.GetAllWithDetailsAsync(branchId: null, cancellationToken);
+        var ptBookings = await _bookingRepository.GetAllPtBookingsWithAvailabilityAsync(cancellationToken);
 
         var trainerReports = trainers.Select(t =>
         {
             var pt = ptBookings.Where(b => b.Availability!.TrainerId == t.Id).ToList();
             var done = pt.Count(b => b.Status.ToString().Equals("Completed", StringComparison.OrdinalIgnoreCase));
             var noShow = pt.Count(b => b.Status.ToString().Equals("NoShow", StringComparison.OrdinalIgnoreCase));
-            var rejected = pt.Count(b => b.Status == BookingStatus.Cancelled);
+            var rejected = pt.Count(b => b.Status == BookingStatus.Rejected || b.Status == BookingStatus.Cancelled);
             var clsCount = sessions.Count(s => s.TrainerId == t.Id);
             var rv = reviews.Where(r => r.TrainerId == t.Id).ToList();
 

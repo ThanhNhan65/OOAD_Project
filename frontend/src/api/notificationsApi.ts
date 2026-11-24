@@ -14,23 +14,48 @@ export interface NotificationApiDto {
 }
 
 export const NOTIFICATIONS_CHANGED_EVENT = 'ooad:notifications-changed';
+export const NAV_COUNTS_CHANGED_EVENT = 'ooad:nav-counts-changed';
 
 export function emitNotificationsChanged() {
   window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED_EVENT));
 }
 
+export function emitNavCountsChanged() {
+  window.dispatchEvent(new Event(NAV_COUNTS_CHANGED_EVENT));
+}
+
+export function emitAppDataChanged() {
+  emitNotificationsChanged();
+  emitNavCountsChanged();
+}
+
 export function mapNotificationType(type?: string): Notification['type'] {
-  switch (type?.toLowerCase()) {
-    case 'success':
-      return 'success';
-    case 'warning':
-      return 'warning';
-    case 'danger':
-    case 'error':
-      return 'danger';
-    default:
-      return 'info';
+  const t = type?.toLowerCase() ?? '';
+  if (
+    t.includes('success') ||
+    t.includes('confirmed') ||
+    t.includes('approved') ||
+    t.includes('promoted')
+  ) {
+    return 'success';
   }
+  if (
+    t.includes('danger') ||
+    t.includes('error') ||
+    t.includes('rejected') ||
+    t.includes('expired')
+  ) {
+    return 'danger';
+  }
+  if (
+    t.includes('warning') ||
+    t.includes('cancelled') ||
+    t.includes('waitlist_joined') ||
+    t.includes('freeze_requested')
+  ) {
+    return 'warning';
+  }
+  return 'info';
 }
 
 export function resolveNotificationLink(n: NotificationApiDto, role?: Role): string | null {
@@ -44,7 +69,16 @@ export function resolveNotificationLink(n: NotificationApiDto, role?: Role): str
   if (ref.includes('freeze')) {
     return role === 'receptionist' ? '/staff/freeze' : '/member/memberships';
   }
-  if (ref.includes('rule')) return '/rules';
+  if (ref.includes('membership')) {
+    return '/member/memberships';
+  }
+  if (ref.includes('card')) {
+    return role === 'receptionist' ? '/staff/member-cards' : '/member/card';
+  }
+  if (ref.includes('booking') || ref.includes('waitlist') || ref.includes('class')) {
+    if (role === 'trainer') return '/trainer/requests';
+    return '/member/bookings';
+  }
   return null;
 }
 

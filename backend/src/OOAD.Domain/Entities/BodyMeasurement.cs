@@ -12,5 +12,4 @@ public class BodyMeasurement : BaseEntity
     // Navigation properties
     public Member Member { get; set; } = null!;
     public ICollection<MeasurementValue> Values { get; set; } = new List<MeasurementValue>();
-    public ICollection<NutritionPlan> NutritionPlans { get; set; } = new List<NutritionPlan>();
 }

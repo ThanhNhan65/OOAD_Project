@@ -19,5 +19,4 @@ public class Member : BaseEntity
     public ICollection<Review> Reviews { get; set; } = new List<Review>();
     public ICollection<EquipmentIssue> ReportedIssues { get; set; } = new List<EquipmentIssue>();
     public ICollection<BodyMeasurement> BodyMeasurements { get; set; } = new List<BodyMeasurement>();
-    public ICollection<NutritionPlan> NutritionPlans { get; set; } = new List<NutritionPlan>();
 }

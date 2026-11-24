@@ -1,14 +1,42 @@
+using Microsoft.EntityFrameworkCore;
 using OOAD.Domain.Entities;
 using OOAD.Domain.Interfaces;
 using OOAD.Infrastructure.Persistence.Context;
-using Microsoft.EntityFrameworkCore;
 
 namespace OOAD.Infrastructure.Repositories;
 
-public class MemberRepository : GenericRepository<Member>, IMemberRepository
+public class MemberRepository : IMemberRepository
 {
-    public MemberRepository(AppDbContext context) : base(context)
+    private readonly AppDbContext _context;
+
+    public MemberRepository(AppDbContext context)
     {
+        _context = context;
+    }
+
+    public async Task<Member?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        return await _context.Members.FirstOrDefaultAsync(m => m.Id == id, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Member>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        return await _context.Members.AsNoTracking().ToListAsync(cancellationToken);
+    }
+
+    public async Task AddAsync(Member entity, CancellationToken cancellationToken = default)
+    {
+        await _context.Members.AddAsync(entity, cancellationToken);
+    }
+
+    public void Update(Member entity)
+    {
+        _context.Members.Update(entity);
+    }
+
+    public void Delete(Member entity)
+    {
+        _context.Members.Remove(entity);
     }
 
     public async Task<Member?> GetByUserIdAsync(Guid userId, CancellationToken cancellationToken = default)
@@ -19,6 +47,18 @@ public class MemberRepository : GenericRepository<Member>, IMemberRepository
             .Include(m => m.Memberships)
                 .ThenInclude(ms => ms.Plan)
             .FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken);
+    }
+
+    public async Task<Member?> GetByUserIdWithUserAsync(
+        Guid userId,
+        bool asNoTracking = false,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _context.Members.Include(m => m.User).AsQueryable();
+        if (asNoTracking)
+            query = query.AsNoTracking();
+
+        return await query.FirstOrDefaultAsync(m => m.UserId == userId, cancellationToken);
     }
 
     public async Task<Member?> GetByIdOrUserIdWithDetailsAsync(Guid idOrUserId, CancellationToken cancellationToken = default)
@@ -53,6 +93,14 @@ public class MemberRepository : GenericRepository<Member>, IMemberRepository
 
         return await query
             .OrderByDescending(m => m.User.CreatedAt)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Guid>> GetAllIdsAsync(CancellationToken cancellationToken = default)
+    {
+        return await _context.Members
+            .AsNoTracking()
+            .Select(m => m.Id)
             .ToListAsync(cancellationToken);
     }
 

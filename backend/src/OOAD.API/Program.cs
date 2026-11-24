@@ -1,16 +1,25 @@
 using OOAD.API.Extensions;
+using OOAD.API.Filters;
+using OOAD.API.Hubs;
 using OOAD.API.Middlewares;
+using OOAD.API.Services;
 using OOAD.Application;
+using OOAD.Application.Common.Interfaces;
+using OOAD.Application.Common.Options;
 using OOAD.Infrastructure;
 using Microsoft.AspNetCore.Authentication;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Đăng ký các tầng kiến trúc Clean Architecture vào IoC Container
+// 1. Đăng ký cấu hình quy tắc nghiệp vụ & các tầng Clean Architecture vào IoC Container
+var businessRules = new BusinessRuleOptions();
+builder.Configuration.GetSection(BusinessRuleOptions.SectionName).Bind(businessRules);
+builder.Services.AddSingleton(businessRules);
 builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices(builder.Configuration);
-
+builder.Services.AddHttpClient();
+builder.Services.AddTransient(sp => sp.GetRequiredService<IHttpClientFactory>().CreateClient());
 // 2. Cấu hình JWT Authentication & Role-based Authorization
 builder.Services
     .AddAuthentication(options =>
@@ -22,25 +31,41 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
-// 3. Cấu hình Controllers & OpenAPI
-builder.Services.AddControllers();
+// 3. Cấu hình Controllers, Validation Handler, OpenAPI & Background Services
+builder.Services.AddScoped<ValidationActionFilter>();
+builder.Services.AddControllers(options => options.Filters.AddService<ValidationActionFilter>());
+builder.Services.AddSignalR();
+builder.Services.AddScoped<IRealtimeNotifier, SignalRRealtimeNotifier>();
 builder.Services.AddOpenApi();
+builder.Services.AddHostedService<WaitlistCutoffBackgroundService>();
 
 // 4. Cấu hình CORS cho Frontend React (Vite / Next.js)
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.WithOrigins("http://localhost:5173", "http://localhost:3000")
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
+        if (builder.Environment.IsDevelopment())
+        {
+            policy.SetIsOriginAllowed(origin =>
+                    Uri.TryCreate(origin, UriKind.Absolute, out var uri) &&
+                    (uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) || uri.Host == "127.0.0.1"))
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        }
+        else
+        {
+            policy.WithOrigins("http://localhost:5173", "http://localhost:3000")
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        }
     });
 });
 
 var app = builder.Build();
 
-// 5. Kích hoạt tự động tạo lại Database (28 bảng Fluent API) & Seed dữ liệu mẫu
+// 5. Kích hoạt tự động tạo lại Database (25 bảng Fluent API) & Seed dữ liệu mẫu
 await app.InitialiseDatabaseAsync();
 
 // 6. Cấu hình HTTP Request Pipeline
@@ -52,9 +77,12 @@ if (app.Environment.IsDevelopment())
     app.MapScalarApiReference();
 }
 
-app.UseHttpsRedirection();
-
 app.UseCors("AllowFrontend");
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 
 app.UseAuthentication();
 
@@ -64,5 +92,6 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<NotificationHub>("/hubs/notifications");
 
 app.Run();

@@ -1,53 +1,31 @@
-using Microsoft.EntityFrameworkCore;
-using OOAD.Application.Common.Interfaces;
 using OOAD.Application.DTOs.Branch;
 using OOAD.Application.Services.Interfaces;
 using OOAD.Domain.Entities;
+using OOAD.Domain.Interfaces;
 
 namespace OOAD.Application.Services.Implementations;
 
 public class BranchService : IBranchService
 {
-    private readonly IAppDbContext _context;
+    private readonly IBranchRepository _branchRepository;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public BranchService(IAppDbContext context)
+    public BranchService(IBranchRepository branchRepository, IUnitOfWork unitOfWork)
     {
-        _context = context;
+        _branchRepository = branchRepository;
+        _unitOfWork = unitOfWork;
     }
 
     public async Task<IEnumerable<BranchDto>> GetAllBranchesAsync(CancellationToken cancellationToken = default)
     {
-        return await _context.Branches
-            .AsNoTracking()
-            .Select(b => new BranchDto(
-                b.Id,
-                b.Name,
-                b.District,
-                b.Address,
-                b.PhoneNumber,
-                b.OperatingHours,
-                b.IsActive
-            ))
-            .ToListAsync(cancellationToken);
+        var branches = await _branchRepository.GetAllAsync(cancellationToken);
+        return branches.Select(MapToDto);
     }
 
     public async Task<BranchDto?> GetBranchByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        var branch = await _context.Branches
-            .AsNoTracking()
-            .FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
-
-        if (branch == null) return null;
-
-        return new BranchDto(
-            branch.Id,
-            branch.Name,
-            branch.District,
-            branch.Address,
-            branch.PhoneNumber,
-            branch.OperatingHours,
-            branch.IsActive
-        );
+        var branch = await _branchRepository.GetByIdAsync(id, cancellationToken);
+        return branch == null ? null : MapToDto(branch);
     }
 
     public async Task<BranchDto> CreateBranchAsync(CreateBranchDto dto, CancellationToken cancellationToken = default)
@@ -62,23 +40,15 @@ public class BranchService : IBranchService
             IsActive = true
         };
 
-        _context.Branches.Add(branch);
-        await _context.SaveChangesAsync(cancellationToken);
+        await _branchRepository.AddAsync(branch, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return new BranchDto(
-            branch.Id,
-            branch.Name,
-            branch.District,
-            branch.Address,
-            branch.PhoneNumber,
-            branch.OperatingHours,
-            branch.IsActive
-        );
+        return MapToDto(branch);
     }
 
     public async Task<BranchDto?> UpdateBranchAsync(Guid id, UpdateBranchDto dto, CancellationToken cancellationToken = default)
     {
-        var branch = await _context.Branches.FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
+        var branch = await _branchRepository.GetByIdAsync(id, cancellationToken);
         if (branch == null) return null;
 
         branch.Name = dto.Name;
@@ -88,16 +58,19 @@ public class BranchService : IBranchService
         branch.OperatingHours = dto.OperatingHours;
         branch.IsActive = dto.IsActive;
 
-        await _context.SaveChangesAsync(cancellationToken);
+        _branchRepository.Update(branch);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return new BranchDto(
-            branch.Id,
-            branch.Name,
-            branch.District,
-            branch.Address,
-            branch.PhoneNumber,
-            branch.OperatingHours,
-            branch.IsActive
-        );
+        return MapToDto(branch);
     }
+
+    private static BranchDto MapToDto(Branch branch) => new(
+        branch.Id,
+        branch.Name,
+        branch.District,
+        branch.Address,
+        branch.PhoneNumber,
+        branch.OperatingHours,
+        branch.IsActive
+    );
 }

@@ -1,42 +1,57 @@
-using Microsoft.EntityFrameworkCore;
-using OOAD.Application.Common.Interfaces;
 using OOAD.Application.DTOs.Equipment;
 using OOAD.Application.Services.Interfaces;
 using OOAD.Domain.Entities;
 using OOAD.Domain.Enums;
+using OOAD.Domain.Exceptions;
+using OOAD.Domain.Interfaces;
 
 namespace OOAD.Application.Services.Implementations;
 
 public class EquipmentService : IEquipmentService
 {
-    private readonly IAppDbContext _context;
+    private readonly IEquipmentRepository _equipmentRepository;
+    private readonly IEquipmentIssueRepository _equipmentIssueRepository;
+    private readonly IBranchRepository _branchRepository;
+    private readonly IMemberRepository _memberRepository;
+    private readonly IStaffRepository _staffRepository;
+    private readonly INotificationRepository _notificationRepository;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public EquipmentService(IAppDbContext context)
+    public EquipmentService(
+        IEquipmentRepository equipmentRepository,
+        IEquipmentIssueRepository equipmentIssueRepository,
+        IBranchRepository branchRepository,
+        IMemberRepository memberRepository,
+        IStaffRepository staffRepository,
+        INotificationRepository notificationRepository,
+        IUnitOfWork unitOfWork)
     {
-        _context = context;
+        _equipmentRepository = equipmentRepository;
+        _equipmentIssueRepository = equipmentIssueRepository;
+        _branchRepository = branchRepository;
+        _memberRepository = memberRepository;
+        _staffRepository = staffRepository;
+        _notificationRepository = notificationRepository;
+        _unitOfWork = unitOfWork;
     }
 
     public async Task<IEnumerable<EquipmentDto>> GetAllAsync(Guid? branchId, CancellationToken ct = default)
     {
-        var query = _context.Equipments.AsNoTracking();
-        if (branchId.HasValue)
-            query = query.Where(e => e.BranchId == branchId.Value);
-
-        var list = await query.ToListAsync(ct);
+        var list = await _equipmentRepository.GetAllByBranchAsync(branchId, ct);
         return list.Select(MapEquipment);
     }
 
     public async Task<EquipmentDto?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
-        var eq = await _context.Equipments.AsNoTracking().FirstOrDefaultAsync(e => e.Id == id, ct);
+        var eq = await _equipmentRepository.GetByIdAsync(id, ct);
         return eq == null ? null : MapEquipment(eq);
     }
 
     public async Task<EquipmentDto> CreateAsync(CreateEquipmentDto dto, CancellationToken ct = default)
     {
-        var branchExists = await _context.Branches.AnyAsync(b => b.Id == dto.BranchId, ct);
+        var branchExists = await _branchRepository.ExistsAsync(dto.BranchId, ct);
         if (!branchExists)
-            throw new InvalidOperationException("Chi nhánh không tồn tại.");
+            throw new NotFoundException("Chi nhánh không tồn tại.");
 
         var eq = new Equipment
         {
@@ -46,53 +61,50 @@ public class EquipmentService : IEquipmentService
             Status = EquipmentStatus.Operational
         };
 
-        _context.Equipments.Add(eq);
-        await _context.SaveChangesAsync(ct);
+        await _equipmentRepository.AddAsync(eq, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
 
         return MapEquipment(eq);
     }
 
     public async Task<EquipmentDto?> UpdateStatusAsync(Guid id, string status, CancellationToken ct = default)
     {
-        var eq = await _context.Equipments.FirstOrDefaultAsync(e => e.Id == id, ct);
+        var eq = await _equipmentRepository.GetByIdAsync(id, ct);
         if (eq == null) return null;
 
         eq.Status = ParseEquipmentStatus(status);
-        await _context.SaveChangesAsync(ct);
+        _equipmentRepository.Update(eq);
+        await _unitOfWork.SaveChangesAsync(ct);
 
         return MapEquipment(eq);
     }
 
     public async Task<IEnumerable<EquipmentReportDto>> GetReportsAsync(Guid? equipmentId, Guid? branchId, CancellationToken ct = default)
     {
-        var query = _context.EquipmentIssues
-            .AsNoTracking()
-            .Include(i => i.Equipment)
-            .Include(i => i.Logs)
-            .AsQueryable();
-
-        if (equipmentId.HasValue)
-            query = query.Where(i => i.EquipmentId == equipmentId.Value);
-
-        if (branchId.HasValue)
-            query = query.Where(i => i.Equipment.BranchId == branchId.Value);
-
-        var issues = await query.OrderByDescending(i => i.CreatedAt).ToListAsync(ct);
+        var issues = await _equipmentIssueRepository.GetReportsWithDetailsAsync(equipmentId, branchId, ct);
         return issues.Select(MapReport);
     }
 
-    public async Task<EquipmentReportDto> CreateReportAsync(Guid userId, CreateEquipmentReportDto dto, CancellationToken ct = default)
+    public async Task<EquipmentReportDto> CreateReportAsync(Guid userId, string userRole, CreateEquipmentReportDto dto, CancellationToken ct = default)
     {
-        var eq = await _context.Equipments.FirstOrDefaultAsync(e => e.Id == dto.EquipmentId, ct)
-            ?? throw new InvalidOperationException("Thiết bị không tồn tại.");
+        var eq = await _equipmentRepository.GetByIdAsync(dto.EquipmentId, ct)
+            ?? throw new NotFoundException("Thiết bị không tồn tại.");
 
-        var member = await _context.Members.AsNoTracking().FirstOrDefaultAsync(m => m.UserId == userId, ct)
-            ?? throw new InvalidOperationException("Chỉ hội viên mới được gửi phản ánh sự cố.");
+        var member = await _memberRepository.GetByUserIdWithUserAsync(userId, asNoTracking: true, ct);
+        var staff = member == null ? await _staffRepository.GetByUserIdWithUserAsync(userId, ct) : null;
+        var isAdmin = userRole.Equals("ADMIN", StringComparison.OrdinalIgnoreCase);
+
+        if (member == null && staff == null && !isAdmin)
+            throw new ValidationException("Tài khoản không có quyền gửi phản ánh sự cố thiết bị.");
+
+        if (staff != null && staff.BranchId != eq.BranchId)
+            throw new UnauthorizedAccessException("Bạn chỉ có thể ghi nhận sự cố thiết bị tại chi nhánh của mình.");
 
         var issue = new EquipmentIssue
         {
             EquipmentId = eq.Id,
-            ReportedBy = member.Id,
+            ReportedBy = member?.Id,
+            HandledBy = member == null ? staff?.Id : null,
             Description = dto.Description.Trim(),
             Status = IssueStatus.Open,
             CreatedAt = DateTime.UtcNow
@@ -100,29 +112,28 @@ public class EquipmentService : IEquipmentService
 
         // Đánh dấu thiết bị gặp sự cố
         eq.Status = EquipmentStatus.Broken;
-        _context.EquipmentIssues.Add(issue);
+        _equipmentRepository.Update(eq);
+        await _equipmentIssueRepository.AddAsync(issue, ct);
 
-        // Tự động gửi thông báo cho Lễ tân thuộc chi nhánh có thiết bị hỏng
-        var branchStaffUserIds = await _context.Staff
-            .AsNoTracking()
-            .Where(s => s.BranchId == eq.BranchId)
-            .Select(s => s.UserId)
-            .ToListAsync(ct);
+        // Tự động gửi thông báo cho Lễ tân thuộc chi nhánh có thiết bị hỏng (trừ người vừa tạo)
+        var branchStaffUserIds = await _staffRepository.GetStaffUserIdsByBranchIdAsync(eq.BranchId, ct);
 
-        foreach (var staffUserId in branchStaffUserIds)
+        foreach (var staffUserId in branchStaffUserIds.Where(id => id != userId))
         {
-            _context.Notifications.Add(new Notification
+            await _notificationRepository.AddAsync(new Notification
             {
                 UserId = staffUserId,
                 Type = "EquipmentIssue",
                 Title = "Phản ánh sự cố thiết bị mới",
                 Content = $"Thiết bị '{eq.Name}' vừa được báo hỏng: {issue.Description}",
+                RefType = "EquipmentIssue",
+                RefId = issue.Id,
                 IsRead = false,
                 CreatedAt = DateTime.UtcNow
-            });
+            }, ct);
         }
 
-        await _context.SaveChangesAsync(ct);
+        await _unitOfWork.SaveChangesAsync(ct);
 
         issue.Equipment = eq;
         return MapReport(issue);
@@ -135,14 +146,10 @@ public class EquipmentService : IEquipmentService
         UpdateReportStatusDto dto,
         CancellationToken ct = default)
     {
-        var issue = await _context.EquipmentIssues
-            .Include(i => i.Equipment)
-            .Include(i => i.Logs)
-            .FirstOrDefaultAsync(i => i.Id == reportId, ct);
-
+        var issue = await _equipmentIssueRepository.GetByIdWithDetailsAsync(reportId, ct);
         if (issue == null) return null;
 
-        var staff = await _context.Staff.AsNoTracking().FirstOrDefaultAsync(s => s.UserId == userId, ct);
+        var staff = await _staffRepository.GetByUserIdWithUserAsync(userId, ct);
 
         // Lễ tân chỉ được xử lý sự cố thuộc đúng chi nhánh mình phụ trách
         if (userRole.Equals("Staff", StringComparison.OrdinalIgnoreCase))
@@ -165,8 +172,9 @@ public class EquipmentService : IEquipmentService
                 StatusAfter = nextStatus,
                 CreatedAt = DateTime.UtcNow
             };
-            _context.EquipmentIssueLogs.Add(log);
-            issue.Logs.Add(log);
+            await _equipmentIssueRepository.AddLogAsync(log, ct);
+            if (!issue.Logs.Contains(log))
+                issue.Logs.Add(log);
         }
 
         // Đồng bộ trạng thái thiết bị theo tiến độ sửa chữa
@@ -178,7 +186,31 @@ public class EquipmentService : IEquipmentService
             _ => EquipmentStatus.Broken
         };
 
-        await _context.SaveChangesAsync(ct);
+        // Gửi thông báo cho hội viên báo hỏng khi sự cố đã được xử lý xong hoặc từ chối
+        if ((nextStatus == IssueStatus.Fixed || nextStatus == IssueStatus.Closed) && issue.ReportedBy.HasValue)
+        {
+            var reporterUserId = issue.Reporter?.UserId
+                ?? (await _memberRepository.GetByIdOrUserIdWithDetailsAsync(issue.ReportedBy.Value, ct))?.UserId;
+
+            if (reporterUserId.HasValue && reporterUserId.Value != Guid.Empty)
+            {
+                var statusLabel = nextStatus == IssueStatus.Fixed ? "đã được khắc phục" : "đã được đóng";
+                var noteInfo = string.IsNullOrWhiteSpace(dto.Note) ? string.Empty : $" Ghi chú: {dto.Note.Trim()}";
+                await _notificationRepository.AddAsync(new Notification
+                {
+                    UserId = reporterUserId.Value,
+                    Type = nextStatus == IssueStatus.Fixed ? "SUCCESS" : "INFO",
+                    Title = "Cập nhật xử lý sự cố thiết bị",
+                    Content = $"Phản ánh sự cố thiết bị '{issue.Equipment.Name}' của bạn {statusLabel}.{noteInfo}",
+                    RefType = "EquipmentIssue",
+                    RefId = issue.Id,
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow
+                }, ct);
+            }
+        }
+
+        await _unitOfWork.SaveChangesAsync(ct);
         return MapReport(issue);
     }
 
@@ -197,7 +229,7 @@ public class EquipmentService : IEquipmentService
         i.Id,
         i.EquipmentId,
         i.Equipment?.BranchId ?? Guid.Empty,
-        i.ReportedBy,
+        i.ReportedBy ?? i.HandledBy ?? Guid.Empty,
         i.Description,
         ToFrontendReportStatus(i.Status),
         i.CreatedAt,
@@ -227,7 +259,7 @@ public class EquipmentService : IEquipmentService
         "repairing" or "undermaintenance" => EquipmentStatus.UnderMaintenance,
         "broken" => EquipmentStatus.Broken,
         "retired" or "decommissioned" => EquipmentStatus.Decommissioned,
-        _ => throw new InvalidOperationException($"Trạng thái thiết bị không hợp lệ: {s}")
+        _ => throw new ValidationException($"Trạng thái thiết bị không hợp lệ: {s}")
     };
 
     private static string ToFrontendReportStatus(IssueStatus s) => s switch
@@ -245,6 +277,6 @@ public class EquipmentService : IEquipmentService
         "in_progress" or "investigating" => IssueStatus.Investigating,
         "resolved" or "fixed" => IssueStatus.Fixed,
         "rejected" or "closed" => IssueStatus.Closed,
-        _ => throw new InvalidOperationException($"Trạng thái sự cố không hợp lệ: {s}")
+        _ => throw new ValidationException($"Trạng thái sự cố không hợp lệ: {s}")
     };
 }

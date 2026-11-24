@@ -12,7 +12,10 @@ public enum BookingStatus
     Confirmed = 2,
     Cancelled = 3,
     Attended = 4,
-    NoShow = 5
+    NoShow = 5,
+    LateCancelled = 6,
+    AutoCancelled = 7,
+    Rejected = 8
 }
 
 public enum MembershipStatus
@@ -29,7 +32,8 @@ public enum PaymentStatus
     Pending = 1,
     Completed = 2,
     Failed = 3,
-    Refunded = 4
+    Refunded = 4,
+    Expired = 5
 }
 
 public enum FreezeRequestStatus

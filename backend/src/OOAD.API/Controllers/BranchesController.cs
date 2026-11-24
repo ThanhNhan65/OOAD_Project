@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using OOAD.Application.DTOs.Branch;
 using OOAD.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Mvc;
@@ -22,6 +23,7 @@ public class BranchesController : ApiControllerBase
     /// Lấy danh sách tất cả chi nhánh (Quận 1, Quận 7, Tân Bình...)
     /// </summary>
     [HttpGet]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(IEnumerable<BranchDto>), StatusCodes.Status200OK)]
     public async Task<ActionResult<IEnumerable<BranchDto>>> GetBranches(CancellationToken cancellationToken)
     {
@@ -33,6 +35,7 @@ public class BranchesController : ApiControllerBase
     /// Lấy chi tiết chi nhánh theo ID
     /// </summary>
     [HttpGet("{id:guid}")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(BranchDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<BranchDto>> GetBranchById(Guid id, CancellationToken cancellationToken)
@@ -50,6 +53,7 @@ public class BranchesController : ApiControllerBase
     /// Tạo mới một chi nhánh phòng tập
     /// </summary>
     [HttpPost]
+    [Authorize(Roles = "ADMIN,Admin")]
     [ProducesResponseType(typeof(BranchDto), StatusCodes.Status201Created)]
     public async Task<ActionResult<BranchDto>> CreateBranch([FromBody] CreateBranchDto dto, CancellationToken cancellationToken)
     {
@@ -60,6 +64,7 @@ public class BranchesController : ApiControllerBase
 /// Cập nhật thông tin chi nhánh
 /// </summary>
 [HttpPut("{id:guid}")]
+[Authorize(Roles = "ADMIN,Admin")]
 [ProducesResponseType(typeof(BranchDto), StatusCodes.Status200OK)]
 [ProducesResponseType(StatusCodes.Status404NotFound)]
 public async Task<ActionResult<BranchDto>> UpdateBranch(Guid id, [FromBody] UpdateBranchDto dto, CancellationToken cancellationToken)

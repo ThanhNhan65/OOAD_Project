@@ -1,12 +1,11 @@
 using System.Reflection;
-using OOAD.Application.Common.Interfaces;
 using OOAD.Domain.Common;
 using OOAD.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace OOAD.Infrastructure.Persistence.Context;
 
-public class AppDbContext : DbContext, IAppDbContext, IApplicationDbContext
+public class AppDbContext : DbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
     {
@@ -37,9 +36,6 @@ public class AppDbContext : DbContext, IAppDbContext, IApplicationDbContext
     public DbSet<BodyMeasurement> BodyMeasurements => Set<BodyMeasurement>();
     public DbSet<MetricType> MetricTypes => Set<MetricType>();
     public DbSet<MeasurementValue> MeasurementValues => Set<MeasurementValue>();
-    public DbSet<NutritionPlan> NutritionPlans => Set<NutritionPlan>();
-    public DbSet<GymRule> GymRules => Set<GymRule>();
-    public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

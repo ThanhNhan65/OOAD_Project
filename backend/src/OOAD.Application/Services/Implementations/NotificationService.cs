@@ -1,17 +1,18 @@
-using Microsoft.EntityFrameworkCore;
-using OOAD.Application.Common.Interfaces;
 using OOAD.Application.DTOs.Notification;
 using OOAD.Application.Services.Interfaces;
+using OOAD.Domain.Interfaces;
 
 namespace OOAD.Application.Services.Implementations;
 
 public class NotificationService : INotificationService
 {
-    private readonly IAppDbContext _context;
+    private readonly INotificationRepository _notificationRepository;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public NotificationService(IAppDbContext context)
+    public NotificationService(INotificationRepository notificationRepository, IUnitOfWork unitOfWork)
     {
-        _context = context;
+        _notificationRepository = notificationRepository;
+        _unitOfWork = unitOfWork;
     }
 
     public async Task<IEnumerable<NotificationDto>> GetUserNotificationsAsync(
@@ -19,49 +20,35 @@ public class NotificationService : INotificationService
         bool unreadOnly = false,
         CancellationToken cancellationToken = default)
     {
-        var query = _context.Notifications
-            .AsNoTracking()
-            .Where(n => n.UserId == userId);
-
-        if (unreadOnly)
-        {
-            query = query.Where(n => !n.IsRead);
-        }
-
-        return await query
-            .OrderByDescending(n => n.CreatedAt)
-            .Select(n => new NotificationDto(
-                n.Id,
-                n.UserId,
-                n.Type,
-                n.Title,
-                n.Content,
-                n.IsRead,
-                n.CreatedAt,
-                n.RefType,
-                n.RefId
-            ))
-            .ToListAsync(cancellationToken);
+        var list = await _notificationRepository.GetByUserIdAsync(userId, unreadOnly, cancellationToken);
+        return list.Select(n => new NotificationDto(
+            n.Id,
+            n.UserId,
+            n.Type,
+            n.Title,
+            n.Content,
+            n.IsRead,
+            n.CreatedAt,
+            n.RefType,
+            n.RefId
+        ));
     }
 
     public async Task<int> GetUnreadCountAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        return await _context.Notifications
-            .AsNoTracking()
-            .CountAsync(n => n.UserId == userId && !n.IsRead, cancellationToken);
+        return await _notificationRepository.CountUnreadByUserIdAsync(userId, cancellationToken);
     }
 
     public async Task<bool> MarkAsReadAsync(Guid id, Guid userId, CancellationToken cancellationToken = default)
     {
-        var item = await _context.Notifications
-            .FirstOrDefaultAsync(n => n.Id == id && n.UserId == userId, cancellationToken);
-
+        var item = await _notificationRepository.GetByIdAndUserIdAsync(id, userId, cancellationToken);
         if (item == null) return false;
 
         if (!item.IsRead)
         {
             item.IsRead = true;
-            await _context.SaveChangesAsync(cancellationToken);
+            _notificationRepository.Update(item);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
         return true;
@@ -69,10 +56,7 @@ public class NotificationService : INotificationService
 
     public async Task MarkAllAsReadAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var unreadList = await _context.Notifications
-            .Where(n => n.UserId == userId && !n.IsRead)
-            .ToListAsync(cancellationToken);
-
+        var unreadList = await _notificationRepository.GetUnreadByUserIdTrackedAsync(userId, cancellationToken);
         if (unreadList.Count == 0) return;
 
         foreach (var n in unreadList)
@@ -80,18 +64,15 @@ public class NotificationService : INotificationService
             n.IsRead = true;
         }
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
     public async Task DeleteAllAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var list = await _context.Notifications
-            .Where(n => n.UserId == userId)
-            .ToListAsync(cancellationToken);
-
+        var list = await _notificationRepository.GetAllByUserIdTrackedAsync(userId, cancellationToken);
         if (list.Count == 0) return;
 
-        _context.Notifications.RemoveRange(list);
-        await _context.SaveChangesAsync(cancellationToken);
+        _notificationRepository.DeleteRange(list);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 }

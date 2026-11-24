@@ -1,4 +1,4 @@
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5111/api';
+const BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '/api' : 'http://localhost:5111/api');
 export const TOKEN_KEY = 'ooad_jwt_token';
 
 export function getAuthToken(): string | null {
@@ -11,6 +11,21 @@ export function setAuthToken(token: string | null): void {
   } else {
     localStorage.removeItem(TOKEN_KEY);
   }
+}
+
+export function isApiNetworkError(err: unknown): boolean {
+  if (err instanceof TypeError) return true;
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    return (
+      msg.includes('failed to fetch') ||
+      msg.includes('networkerror') ||
+      msg.includes('load failed') ||
+      msg.includes('err_connection_refused') ||
+      msg.includes('network request failed')
+    );
+  }
+  return false;
 }
 
 export async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
@@ -42,16 +57,24 @@ export async function request<T>(endpoint: string, options?: RequestInit): Promi
 
   if (!response.ok) {
     let errorMessage = response.statusText;
-    
+    let errorType: string | undefined;
+
     if (data) {
-      if (typeof data === 'object' && data.message) {
-        errorMessage = data.message;
+      if (typeof data === 'object') {
+        errorType = data?.type;
+        if (data.message) {
+          errorMessage = data.message;
+        } else if (data.title) {
+          errorMessage = data.title;
+        } else {
+          errorMessage = JSON.stringify(data);
+        }
       } else if (typeof data === 'string') {
         errorMessage = data;
       }
     }
 
-    if (response.status === 401) {
+    if (response.status === 401 || (response.status === 403 && errorType === 'AccountLocked')) {
       setAuthToken(null);
     }
 

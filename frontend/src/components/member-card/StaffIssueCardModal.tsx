@@ -2,31 +2,27 @@ import { useState } from 'react';
 import { CreditCard, Sparkles, ShieldAlert, Lock, CheckCircle2 } from 'lucide-react';
 import { Avatar, Badge, Modal } from '../ui';
 import { useApp } from '../../store/AppContext';
-import * as L from '../../store/logic';
-import { memberCardService } from '../../api/memberCard.service';
+import { memberCardService, type MemberCardDto } from '../../api/memberCard.service';
 import { QRCodeDisplay } from './QRCodeDisplay';
 import { cardStatusMeta } from '../labels';
-import type { User } from '../../types';
 
 export interface StaffIssueCardModalProps {
-  member: User;
+  card: MemberCardDto;
   onClose: () => void;
-  onIssued?: (newCardCode: string) => void;
+  onIssued?: (newCardCode: string) => void | Promise<void>;
 }
 
 export function StaffIssueCardModal({
-  member,
+  card,
   onClose,
   onIssued,
 }: StaffIssueCardModalProps) {
-  const { db, user, act } = useApp();
-  const currentCard = L.activeCardOf(db, member.id);
-
+  const { toast } = useApp();
   const [previousCardStatus, setPreviousCardStatus] = useState<'LOST' | 'LOCKED'>(
-    currentCard?.status === 'LOST' ? 'LOST' : 'LOCKED',
+    card.status === 'LOST' ? 'LOST' : 'LOCKED',
   );
   const [reason, setReason] = useState(
-    currentCard?.status === 'LOST'
+    card.status === 'LOST'
       ? 'Cấp lại thẻ mới thay thế thẻ hội viên đã báo mất'
       : 'Cấp đổi thẻ hội viên mới tại quầy lễ tân',
   );
@@ -36,32 +32,16 @@ export function StaffIssueCardModal({
   const handleIssue = async () => {
     setLoading(true);
     try {
-      // Gọi API Backend POST /api/member-cards/issue nếu có kết nối
-      try {
-        await memberCardService.issueCard({
-          memberId: member.id,
-          previousCardStatus,
-          reason: reason.trim(),
-        });
-      } catch {
-        // Fallback sang store cục bộ khi chạy ở chế độ Demo
-      }
-
-      const created = act(
-        (d) =>
-          L.issueMemberCard(d, {
-            memberId: member.id,
-            staffId: user?.id,
-            previousCardStatus,
-            reason: reason.trim(),
-          }),
-        (res) => `Đã cấp thẻ mới ${res.cardCode} cho hội viên ${member.fullName}`,
-      );
-
-      if (created) {
-        setIssuedCode(created.cardCode);
-        onIssued?.(created.cardCode);
-      }
+      const issued = await memberCardService.issueCard({
+        memberId: card.memberId,
+        previousCardStatus,
+        reason: reason.trim(),
+      });
+      toast(`Đã cấp thẻ mới ${issued.cardCode} cho hội viên ${card.memberName}`, 'success');
+      setIssuedCode(issued.cardCode);
+      await onIssued?.(issued.cardCode);
+    } catch (err) {
+      toast((err as Error).message, 'error');
     } finally {
       setLoading(false);
     }
@@ -69,7 +49,7 @@ export function StaffIssueCardModal({
 
   return (
     <Modal
-      title={issuedCode ? 'Cấp thẻ hội viên mới thành công' : `Cấp thẻ hội viên mới · ${member.fullName}`}
+      title={issuedCode ? 'Cấp thẻ hội viên mới thành công' : `Cấp thẻ hội viên mới · ${card.memberName}`}
       onClose={onClose}
       footer={
         issuedCode ? (
@@ -113,7 +93,7 @@ export function StaffIssueCardModal({
           </div>
           <QRCodeDisplay value={issuedCode} size={156} status="ACTIVE" />
           <p className="small muted" style={{ maxWidth: 400 }}>
-            Thẻ cũ của hội viên <b>{member.fullName}</b> đã tự động chuyển sang trạng thái{' '}
+            Thẻ cũ của hội viên <b>{card.memberName}</b> đã tự động chuyển sang trạng thái{' '}
             <b>{previousCardStatus}</b>. Hội viên có thể sử dụng ngay mã QR mới này tại trang Hồ sơ cá nhân.
           </p>
         </div>
@@ -123,18 +103,18 @@ export function StaffIssueCardModal({
           <div className="card" style={{ background: 'var(--surface-2)', padding: 14 }}>
             <div className="row between wrap" style={{ gap: 10 }}>
               <div className="row" style={{ gap: 10 }}>
-                <Avatar user={member} />
+                <Avatar user={{ fullName: card.memberName, avatarColor: '#7c5cff' }} />
                 <div>
-                  <div className="bold" style={{ fontSize: 15 }}>{member.fullName}</div>
-                  <div className="small muted">{member.phone} · {member.email}</div>
+                  <div className="bold" style={{ fontSize: 15 }}>{card.memberName}</div>
+                  <div className="small muted">{card.memberPhone || '—'} · {card.memberEmail}</div>
                 </div>
               </div>
-              {currentCard && (
+              {card.cardCode && (
                 <div style={{ textAlign: 'right' }}>
                   <div className="small muted">Thẻ hiện tại</div>
                   <div className="row" style={{ gap: 6, marginTop: 2 }}>
-                    <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{currentCard.cardCode}</span>
-                    <Badge color={cardStatusMeta[currentCard.status].color}>{currentCard.status}</Badge>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{card.cardCode}</span>
+                    <Badge color={cardStatusMeta[card.status].color}>{card.status}</Badge>
                   </div>
                 </div>
               )}
@@ -142,9 +122,9 @@ export function StaffIssueCardModal({
           </div>
 
           {/* Chọn xử lý cho thẻ cũ */}
-          {currentCard && currentCard.status !== 'LOST' && (
+          {card.status !== 'LOST' && (
             <div className="field">
-              <label>Xử lý đối với thẻ cũ ({currentCard.cardCode}) khi cấp thẻ mới</label>
+              <label>Xử lý đối với thẻ cũ ({card.cardCode}) khi cấp thẻ mới</label>
               <div className="grid g2" style={{ gap: 10, marginTop: 6 }}>
                 <button
                   type="button"

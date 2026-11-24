@@ -21,7 +21,9 @@ export interface User {
   avatarColor: string;
   locked: boolean;
   createdAt: string;
-  branchId?: string; // receptionist work branch
+  memberId?: string;
+  branchId?: string; // receptionist / trainer work branch
+  branchName?: string;
   cardCode?: string; // member card / QR code
   cardStatus?: CardStatus; // trạng thái thẻ hiện tại: ACTIVE | LOCKED | LOST
   trainer?: TrainerProfile;
@@ -152,7 +154,7 @@ export interface FreezeRequest {
   note?: string;
 }
 
-export type PaymentMethod = 'momo' | 'vnpay' | 'card' | 'banking';
+export type PaymentMethod = 'vnpay' | 'ZaloPay';
 
 export interface Payment {
   id: string;

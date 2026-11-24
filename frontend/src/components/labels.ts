@@ -62,11 +62,24 @@ export const reqLabel: Record<RequestStatus, L> = {
 };
 
 export const methodLabel: Record<PaymentMethod, string> = {
-  momo: 'Ví MoMo',
   vnpay: 'VNPay',
-  card: 'Thẻ quốc tế',
-  banking: 'Internet Banking',
+  ZaloPay: 'Ví ZaloPay',
 };
+
+export function formatPaymentMethod(method?: string | null): string {
+  if (!method) return 'Ví ZaloPay';
+  const key = method.trim().toLowerCase();
+  switch (key) {
+    case 'zalopay':
+    case 'wallet':
+      return 'Ví ZaloPay';
+    case 'vnpay':
+    case 'card':
+      return 'VNPay';
+    default:
+      return method;
+  }
+}
 
 export const cardStatusMeta: Record<CardStatus, { label: string; color: 'green' | 'amber' | 'red'; desc: string }> = {
   ACTIVE: {

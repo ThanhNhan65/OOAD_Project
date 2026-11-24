@@ -848,6 +848,29 @@ tbody tr:hover {
   background: var(--surface-2);
 }
 
+.admin-compact-table {
+  font-size: 12.5px;
+}
+.admin-compact-table th {
+  font-size: 10.5px;
+  padding: 8px 10px;
+  letter-spacing: 0.04em;
+}
+.admin-compact-table td {
+  padding: 8px 10px;
+  line-height: 1.35;
+}
+.admin-compact-table .badge {
+  font-size: 10.5px;
+  padding: 2px 7px;
+}
+.admin-compact-table .btn.xs {
+  padding: 4px 8px;
+  font-size: 11.5px;
+  gap: 4px;
+  white-space: nowrap;
+}
+
 /* ---------------- Badge ---------------- */
 .badge {
   display: inline-flex;
@@ -1268,6 +1291,26 @@ tbody tr:hover {
   background: linear-gradient(90deg, transparent, var(--teal), transparent);
   box-shadow: 0 0 20px var(--teal);
   animation: scan 2.5s ease-in-out infinite;
+  z-index: 2;
+  pointer-events: none;
+}
+.qr-camera-mount {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+.qr-camera-mount.inactive {
+  display: none;
+}
+.qr-camera-mount video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+}
+.qr-camera-mount #qr-shaded-region {
+  border-color: rgba(15, 23, 42, 0.45) !important;
 }
 .result-panel {
   border-radius: 18px;

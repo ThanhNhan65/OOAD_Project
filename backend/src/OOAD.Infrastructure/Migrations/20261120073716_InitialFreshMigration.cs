@@ -760,7 +760,7 @@ namespace OOAD.Infrastructure.Migrations
                         column: x => x.Recorded_By,
                         principalTable: "Staff",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Restrict);
+                        onDelete: ReferentialAction.NoAction);
                 });
 
             migrationBuilder.CreateTable(

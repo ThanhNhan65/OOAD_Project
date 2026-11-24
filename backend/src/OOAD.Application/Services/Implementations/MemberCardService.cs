@@ -1,4 +1,3 @@
-using OOAD.Application.Common.Interfaces;
 using OOAD.Application.DTOs;
 using OOAD.Application.Services.Interfaces;
 using OOAD.Domain.Entities;
@@ -21,7 +20,6 @@ public class MemberCardService : IMemberCardService
     private readonly IMemberRepository _memberRepository;
     private readonly IUserRepository _userRepository;
     private readonly INotificationRepository _notificationRepository;
-    private readonly IAppDbContext _context;
     private readonly IUnitOfWork _unitOfWork;
 
     public MemberCardService(
@@ -29,14 +27,12 @@ public class MemberCardService : IMemberCardService
         IMemberRepository memberRepository,
         IUserRepository userRepository,
         INotificationRepository notificationRepository,
-        IAppDbContext context,
         IUnitOfWork unitOfWork)
     {
         _memberCardRepository = memberCardRepository;
         _memberRepository = memberRepository;
         _userRepository = userRepository;
         _notificationRepository = notificationRepository;
-        _context = context;
         _unitOfWork = unitOfWork;
     }
 
@@ -110,7 +106,7 @@ public class MemberCardService : IMemberCardService
             throw new NotFoundException($"Không tìm thấy hồ sơ hội viên với mã: {request.MemberId}");
         }
 
-        // Xác định trạng thái chuyển đổi cho thẻ cũ đang ACTIVE (LOCKED hoặc LOST)
+        // Xác định trạng thái chuyển đổi cho thẻ cũ đang ACTIVE (LOCKED, LOST hoặc REPLACED)
         var oldStatusTarget = DetermineOldCardTargetStatus(request.PreviousCardStatus, request.Reason);
 
         foreach (var existingCard in member.MemberCards)
@@ -123,6 +119,11 @@ public class MemberCardService : IMemberCardService
             else if (oldStatusTarget == "LOST" && existingCard.Status.Equals("LOCKED", StringComparison.OrdinalIgnoreCase))
             {
                 existingCard.Status = "LOST";
+                _memberCardRepository.Update(existingCard);
+            }
+            else if (oldStatusTarget == "REPLACED" && existingCard.Status.Equals("LOCKED", StringComparison.OrdinalIgnoreCase))
+            {
+                existingCard.Status = "REPLACED";
                 _memberCardRepository.Update(existingCard);
             }
         }
@@ -212,10 +213,15 @@ public class MemberCardService : IMemberCardService
             }
         }
 
-        // Quy tắc State Machine: Thẻ đã LOST bị vô hiệu hóa vĩnh viễn, không thể mở khóa lại
+        // Quy tắc State Machine: Thẻ đã LOST hoặc REPLACED bị vô hiệu hóa vĩnh viễn, không thể mở khóa lại
         if (card.Status.Equals("LOST", StringComparison.OrdinalIgnoreCase) && targetStatus != "LOST")
         {
             throw new ValidationException("Thẻ đã báo mất (LOST) bị vô hiệu hóa vĩnh viễn và không thể kích hoạt lại. Vui lòng sử dụng chức năng Cấp thẻ mới.");
+        }
+
+        if (card.Status.Equals("REPLACED", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ValidationException("Thẻ đã được thay thế (REPLACED) bị vô hiệu hóa vĩnh viễn và không thể kích hoạt lại.");
         }
 
         // Nếu Lễ tân mở khóa thẻ sang ACTIVE, đảm bảo các thẻ ACTIVE khác (nếu có) của hội viên này chuyển sang LOCKED
@@ -269,7 +275,7 @@ public class MemberCardService : IMemberCardService
         if (!string.IsNullOrWhiteSpace(previousCardStatus))
         {
             var normalized = previousCardStatus.Trim().ToUpperInvariant();
-            if (normalized == "LOST" || normalized == "LOCKED")
+            if (normalized == "LOST" || normalized == "LOCKED" || normalized == "REPLACED")
             {
                 return normalized;
             }
@@ -284,7 +290,7 @@ public class MemberCardService : IMemberCardService
             }
         }
 
-        return "LOCKED";
+        return "REPLACED";
     }
 
     private static MemberCard SelectPrimaryCard(ICollection<MemberCard> cards)

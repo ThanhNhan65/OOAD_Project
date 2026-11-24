@@ -6,7 +6,7 @@ namespace OOAD.Domain.Entities;
 public class EquipmentIssue : BaseEntity
 {
     public Guid EquipmentId { get; set; }
-    public Guid ReportedBy { get; set; }
+    public Guid? ReportedBy { get; set; }
     public Guid? HandledBy { get; set; }
     public string Description { get; set; } = string.Empty;
     public IssueStatus Status { get; set; } = IssueStatus.Open;
@@ -14,7 +14,7 @@ public class EquipmentIssue : BaseEntity
 
     // Navigation properties
     public Equipment Equipment { get; set; } = null!;
-    public Member Reporter { get; set; } = null!;
+    public Member? Reporter { get; set; }
     public Staff? Handler { get; set; }
     public ICollection<EquipmentIssueLog> Logs { get; set; } = new List<EquipmentIssueLog>();
 }
