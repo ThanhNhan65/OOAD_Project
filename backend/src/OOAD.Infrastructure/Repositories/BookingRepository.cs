@@ -103,7 +103,7 @@ public class BookingRepository : IBookingRepository
         CancellationToken cancellationToken = default)
     {
         var query = _context.Bookings
-            .AsNoTracking()
+            .AsNoTrackingWithIdentityResolution()
             .Include(b => b.ClassSession)
                 .ThenInclude(cs => cs!.GymClass)
                     .ThenInclude(gc => gc.Branch)
@@ -237,7 +237,7 @@ public class BookingRepository : IBookingRepository
                         (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Confirmed));
 
         if (asNoTracking)
-            query = query.AsNoTracking();
+            query = query.AsNoTrackingWithIdentityResolution();
 
         return await query.ToListAsync(cancellationToken);
     }
@@ -247,7 +247,7 @@ public class BookingRepository : IBookingRepository
         CancellationToken cancellationToken = default)
     {
         return await _context.Bookings
-            .AsNoTracking()
+            .AsNoTrackingWithIdentityResolution()
             .Include(b => b.Member).ThenInclude(m => m.User)
             .Include(b => b.Availability).ThenInclude(a => a!.Trainer).ThenInclude(t => t.User)
             .Include(b => b.Availability).ThenInclude(a => a!.Trainer).ThenInclude(t => t.Branch)
@@ -265,7 +265,7 @@ public class BookingRepository : IBookingRepository
         CancellationToken cancellationToken = default)
     {
         var query = _context.Bookings
-            .AsNoTracking()
+            .AsNoTrackingWithIdentityResolution()
             .Include(b => b.Member).ThenInclude(m => m.User)
             .Include(b => b.Availability)
             .Include(b => b.Membership).ThenInclude(ms => ms.Plan)

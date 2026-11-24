@@ -50,7 +50,7 @@ public class ClassSessionRepository : IClassSessionRepository
         CancellationToken cancellationToken = default)
     {
         var query = _context.ClassSessions
-            .AsNoTracking()
+            .AsNoTrackingWithIdentityResolution()
             .Include(s => s.GymClass)
                 .ThenInclude(c => c.Branch)
             .Include(s => s.GymClass)
@@ -198,7 +198,7 @@ public class ClassSessionRepository : IClassSessionRepository
         CancellationToken cancellationToken = default)
     {
         return await _context.ClassSessions
-            .AsNoTracking()
+            .AsNoTrackingWithIdentityResolution()
             .Include(s => s.Bookings)
             .Include(s => s.WaitlistEntries)
             .Include(s => s.Trainer).ThenInclude(t => t.User)

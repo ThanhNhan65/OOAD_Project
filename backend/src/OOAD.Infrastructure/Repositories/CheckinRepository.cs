@@ -63,7 +63,6 @@ public class CheckinRepository : ICheckinRepository
         CancellationToken cancellationToken = default)
     {
         return await QueryWithDetails()
-            .AsNoTracking()
             .FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
     }
 
@@ -71,7 +70,7 @@ public class CheckinRepository : ICheckinRepository
         Guid? branchId = null,
         CancellationToken cancellationToken = default)
     {
-        var query = QueryWithDetails().AsNoTracking().Where(c => c.CheckOutAt == null);
+        var query = QueryWithDetails().AsNoTrackingWithIdentityResolution().Where(c => c.CheckOutAt == null);
         if (branchId.HasValue && branchId.Value != Guid.Empty)
         {
             query = query.Where(c => c.BranchId == branchId.Value);
@@ -90,7 +89,7 @@ public class CheckinRepository : ICheckinRepository
         int take = 200,
         CancellationToken cancellationToken = default)
     {
-        var query = QueryWithDetails().AsNoTracking();
+        var query = QueryWithDetails().AsNoTrackingWithIdentityResolution();
 
         if (branchId.HasValue && branchId.Value != Guid.Empty)
             query = query.Where(c => c.BranchId == branchId.Value);

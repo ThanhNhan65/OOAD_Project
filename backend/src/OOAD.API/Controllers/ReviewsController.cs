@@ -33,7 +33,7 @@ public class ReviewsController : ApiControllerBase
     /// HLV đang đăng nhập lấy danh sách đánh giá của chính mình.
     /// </summary>
     [HttpGet("me")]
-    [Authorize(Roles = "Trainer,Admin")]
+    [Authorize(Roles = "TRAINER,ADMIN,Trainer,Admin")]
     public async Task<ActionResult<TrainerReviewSummaryDto>> GetMyReviews(CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();

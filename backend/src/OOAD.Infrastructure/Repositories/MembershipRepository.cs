@@ -45,7 +45,7 @@ public class MembershipRepository : IMembershipRepository
         CancellationToken cancellationToken = default)
     {
         return await _context.Memberships
-            .AsNoTracking()
+            .AsNoTrackingWithIdentityResolution()
             .Include(m => m.Branch)
             .Include(m => m.Plan)
                 .ThenInclude(p => p.PlanBranches)
@@ -60,7 +60,7 @@ public class MembershipRepository : IMembershipRepository
         CancellationToken cancellationToken = default)
     {
         return await _context.Memberships
-            .AsNoTracking()
+            .AsNoTrackingWithIdentityResolution()
             .Include(m => m.Plan).ThenInclude(p => p.PlanBranches)
             .Include(m => m.Branch)
             .Include(m => m.FreezeRequests)

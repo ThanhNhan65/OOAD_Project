@@ -192,10 +192,20 @@ public class JwtAuthenticationHandler : AuthenticationHandler<AuthenticationSche
                 // Xây dựng lại danh sách Claims chuẩn xác hoàn toàn cho .NET Core Authorization
                 var newClaims = new List<Claim>(identity.Claims);
                 
-                // Nếu tìm thấy role nhưng chưa có ClaimTypes.Role chuẩn, ta bổ sung vào
-                if (!string.IsNullOrEmpty(roleValue) && !identity.HasClaim(c => c.Type == ClaimTypes.Role))
+                // Bổ sung cả dạng IN HOA và PascalCase cho ClaimTypes.Role để [Authorize(Roles = "...")] không bị lệch hoa/thường
+                if (!string.IsNullOrEmpty(roleValue))
                 {
-                    newClaims.Add(new Claim(ClaimTypes.Role, roleValue));
+                    var upperRole = roleValue.ToUpperInvariant();
+                    var pascalRole = System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(roleValue.ToLowerInvariant());
+
+                    if (!newClaims.Any(c => c.Type == ClaimTypes.Role && c.Value == upperRole))
+                    {
+                        newClaims.Add(new Claim(ClaimTypes.Role, upperRole));
+                    }
+                    if (!newClaims.Any(c => c.Type == ClaimTypes.Role && c.Value == pascalRole))
+                    {
+                        newClaims.Add(new Claim(ClaimTypes.Role, pascalRole));
+                    }
                 }
 
                 // Tạo lại ClaimsIdentity mới với AuthenticationType rõ ràng và chuẩn Auth của ASP.NET Core
