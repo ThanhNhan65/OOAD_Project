@@ -164,17 +164,17 @@ function ResultPanel({ r }: { r: Result }) {
     const msColor = ar.membershipStatus === 'ACTIVE' ? 'green' : ar.membershipStatus === 'FROZEN' ? 'purple' : 'amber';
     return (
       <div className={`result-panel ${r.ok ? 'ok' : 'no'}`}>
-        <div className="row">
-          {r.ok ? <CheckCircle2 size={34} color="#2ed47a" /> : <XCircle size={34} color="#ff4d6d" />}
-          <div>
+        <div className="row" style={{ alignItems: 'flex-start' }}>
+          {r.ok ? <CheckCircle2 size={34} color="#2ed47a" style={{ flexShrink: 0 }} /> : <XCircle size={34} color="#ff4d6d" style={{ flexShrink: 0 }} />}
+          <div style={{ minWidth: 0 }}>
             <h2>{r.title}</h2>
             {r.msg && <div className="muted">{r.msg}</div>}
           </div>
         </div>
         {ar.memberName && (
-          <div className="row mt16">
+          <div className="row wrap mt16">
             <Avatar user={{ fullName: ar.memberName, avatarColor: r.ok ? '#00d1b2' : '#ff4d6d' }} />
-            <div className="grow">
+            <div className="grow" style={{ minWidth: 0 }}>
               <b>{ar.memberName}</b>
               <div className="small muted">
                 {ar.cardCode || 'Thủ công'} ·{' '}
@@ -198,11 +198,14 @@ function ResultPanel({ r }: { r: Result }) {
   const plan = ms ? L.planById(db, ms.planId) : undefined;
   return (
     <div className={`result-panel ${r.ok ? 'ok' : 'no'}`}>
-      <div className="row">{r.ok ? <CheckCircle2 size={34} color="#2ed47a" /> : <XCircle size={34} color="#ff4d6d" />}<div><h2>{r.title}</h2>{r.msg && <div className="muted">{r.msg}</div>}</div></div>
+      <div className="row" style={{ alignItems: 'flex-start' }}>
+        {r.ok ? <CheckCircle2 size={34} color="#2ed47a" style={{ flexShrink: 0 }} /> : <XCircle size={34} color="#ff4d6d" style={{ flexShrink: 0 }} />}
+        <div style={{ minWidth: 0 }}><h2>{r.title}</h2>{r.msg && <div className="muted">{r.msg}</div>}</div>
+      </div>
       {m && (
-        <div className="row mt16">
+        <div className="row wrap mt16">
           <Avatar user={m} />
-          <div className="grow"><b>{m.fullName}</b><div className="small muted">{m.cardCode} · {plan ? `${plan.name} · HSD ${fmtDate(ms!.endDate)}` : 'Không có gói hiệu lực'}</div></div>
+          <div className="grow" style={{ minWidth: 0 }}><b>{m.fullName}</b><div className="small muted">{m.cardCode} · {plan ? `${plan.name} · HSD ${fmtDate(ms!.endDate)}` : 'Không có gói hiệu lực'}</div></div>
           {ms && <Badge color={mStatusLabel[L.membershipStatus(db, ms)][1]}>{mStatusLabel[L.membershipStatus(db, ms)][0]}</Badge>}
         </div>
       )}
@@ -234,6 +237,16 @@ function Scanner({
   const [scanMode, setScanMode] = useState<'auto' | 'in' | 'out'>('auto');
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const focusInputOnDesktop = useCallback(() => {
+    if (typeof window !== 'undefined' && window.matchMedia?.('(pointer: fine)').matches) {
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
+  }, []);
+
+  useEffect(() => {
+    focusInputOnDesktop();
+  }, [focusInputOnDesktop]);
 
   const members = db.users.filter((u) => u.role === 'member').slice(0, 10);
 
@@ -277,7 +290,7 @@ function Scanner({
         setBusy(false);
         setCode('');
         if (!cameraOn) {
-          setTimeout(() => inputRef.current?.focus(), 0);
+          focusInputOnDesktop();
         }
       }
       return;
@@ -296,7 +309,7 @@ function Scanner({
     }
     setCode('');
     if (!cameraOn) {
-      setTimeout(() => inputRef.current?.focus(), 0);
+      focusInputOnDesktop();
     }
   };
 
@@ -323,8 +336,8 @@ function Scanner({
   };
 
   return (
-    <div className="grid g2">
-      <div>
+    <div className="grid g2 scanner-grid">
+      <div className="scanner-main">
         <div className="scanner">
           <QrCameraScanner
             active={cameraOn}
@@ -337,37 +350,39 @@ function Scanner({
             onActiveChange={setCameraOn}
           />
           {[[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, y], i) => (
-            <span key={i} className="corner" style={{ [x ? 'right' : 'left']: 24, [y ? 'bottom' : 'top']: 24, borderRight: x ? undefined : 'none', borderLeft: x ? 'none' : undefined, borderBottom: y ? undefined : 'none', borderTop: y ? 'none' : undefined, borderRadius: 6, pointerEvents: 'none', zIndex: 2 } as React.CSSProperties} />
+            <span key={i} className="corner" style={{ [x ? 'right' : 'left']: 20, [y ? 'bottom' : 'top']: 20, borderRight: x ? undefined : 'none', borderLeft: x ? 'none' : undefined, borderBottom: y ? undefined : 'none', borderTop: y ? 'none' : undefined, borderRadius: 6, pointerEvents: 'none', zIndex: 2 } as React.CSSProperties} />
           ))}
           <div className="line" />
           {!cameraOn && (
-            <div style={{ textAlign: 'center', zIndex: 2 }}>
-              <ScanLine size={46} color="#00d1b2" />
+            <div style={{ textAlign: 'center', zIndex: 2, padding: '0 16px' }}>
+              <ScanLine size={44} color="#00d1b2" />
               <div className="muted mt8">Đưa thẻ / mã QR vào vùng quét</div>
             </div>
           )}
         </div>
-        <div className="row wrap mt12" style={{ gap: 8, alignItems: 'center' }}>
-          <button
-            type="button"
-            id="toggle-qr-camera"
-            className={`btn sm ${cameraOn ? 'danger' : 'primary'}`}
-            onClick={() => {
-              setCameraErr(null);
-              setCameraOn((prev) => !prev);
-            }}
-          >
-            {cameraOn ? <><CameraOff size={15} /> Tắt Camera</> : <><Camera size={15} /> Bật Camera QR</>}
-          </button>
-          <button
-            type="button"
-            id="upload-qr-image"
-            className="btn sm"
-            disabled={busy}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <ImageUp size={15} /> Quét từ ảnh QR
-          </button>
+        <div className="scanner-toolbar mt12">
+          <div className="scanner-toolbar-actions">
+            <button
+              type="button"
+              id="toggle-qr-camera"
+              className={`btn sm ${cameraOn ? 'danger' : 'primary'}`}
+              onClick={() => {
+                setCameraErr(null);
+                setCameraOn((prev) => !prev);
+              }}
+            >
+              {cameraOn ? <><CameraOff size={15} /> Tắt Camera</> : <><Camera size={15} /> Bật Camera QR</>}
+            </button>
+            <button
+              type="button"
+              id="upload-qr-image"
+              className="btn sm"
+              disabled={busy}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <ImageUp size={15} /> Quét từ ảnh QR
+            </button>
+          </div>
           <input
             ref={fileInputRef}
             type="file"
@@ -375,7 +390,7 @@ function Scanner({
             style={{ display: 'none' }}
             onChange={handleUploadQrFile}
           />
-          <div className="chips" style={{ marginLeft: 'auto' }}>
+          <div className="chips scanner-mode-chips">
             {[
               { id: 'auto' as const, label: 'Tự động' },
               { id: 'in' as const, label: 'Vào' },
@@ -397,10 +412,12 @@ function Scanner({
             {cameraErr}
           </div>
         )}
-        <div className="row mt16">
-          <input ref={inputRef} autoFocus className="input grow" placeholder="Mã thẻ hoặc quét USB QR (VD: DF-1001)" value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && run(resolveModeForCode(code))} id="scan-code" />
-          <button className="btn success" disabled={busy} onClick={() => run('in')} id="scan-in"><LogIn size={16} /> Vào</button>
-          <button className="btn" disabled={busy} onClick={() => run('out')} id="scan-out"><LogOut size={16} /> Ra</button>
+        <div className="scanner-input-row mt16">
+          <input ref={inputRef} className="input grow" placeholder="Mã thẻ hoặc quét USB QR (VD: DF-1001)" value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && run(resolveModeForCode(code))} id="scan-code" />
+          <div className="scanner-input-actions">
+            <button className="btn success" disabled={busy} onClick={() => run('in')} id="scan-in"><LogIn size={16} /> Vào</button>
+            <button className="btn" disabled={busy} onClick={() => run('out')} id="scan-out"><LogOut size={16} /> Ra</button>
+          </div>
         </div>
         <div className="small dim mt16 mb16" style={{ marginBottom: 6 }}>Mô phỏng quẹt thẻ nhanh:</div>
         <div className="chips">
@@ -428,7 +445,7 @@ function Scanner({
               ))}
         </div>
       </div>
-      <div>{res ? <ResultPanel r={res} /> : <div className="card" style={{ height: '100%' }}><Empty text="Kết quả quét sẽ hiển thị tại đây" icon={<ScanLine size={40} />} /></div>}</div>
+      <div className={`scanner-result${res ? ' has-result' : ''}`}>{res ? <ResultPanel r={res} /> : <div className="card" style={{ height: '100%' }}><Empty text="Kết quả quét sẽ hiển thị tại đây" icon={<ScanLine size={40} />} /></div>}</div>
     </div>
   );
 }
@@ -637,23 +654,25 @@ export function Kiosk() {
   const curApiBr = branches.find((b) => b.id === br);
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: 32 }}>
-      <div className="row between mb16">
+    <div className="kiosk-shell">
+      <div className="kiosk-header mb16">
         <div className="brand" style={{ padding: 0 }}><div className="brand-logo"><Zap size={22} color="#fff" fill="#fff" /></div><div><div className="brand-name">DFGym<span className="grad-text">Center</span></div><div className="brand-sub">Kiosk check-in</div></div></div>
-        <div className="row">
-          <select className="input" value={br} onChange={(e) => setBr(e.target.value)} id="kiosk-branch">
+        <div className="kiosk-header-actions">
+          <select className="input kiosk-branch-select" value={br} onChange={(e) => setBr(e.target.value)} id="kiosk-branch">
             {(apiMode ? branches : db.branches).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
-          <Link to="/login" className="btn"><ArrowLeft size={16} /> Thoát</Link>
+          <Link to="/login" className="btn kiosk-exit-btn"><ArrowLeft size={16} /> Thoát</Link>
         </div>
       </div>
-      <div className="card mb16 row">
-        <span className="live-dot" />{' '}
-        {apiMode ? (
-          <><b>{activeList.length}</b> người đang tập tại {curApiBr?.name} · Giờ mở cửa {curApiBr?.operatingHours}</>
-        ) : (
-          <><b>{L.presentCount(db, br)}</b> người đang tập tại {L.branchById(db, br)?.name} · Giờ mở cửa {L.branchById(db, br)?.openTime}–{L.branchById(db, br)?.closeTime}</>
-        )}
+      <div className="card mb16 kiosk-status-bar">
+        <span className="live-dot" />
+        <div className="small">
+          {apiMode ? (
+            <><b>{activeList.length}</b> người đang tập tại <b>{curApiBr?.name}</b> · Giờ mở cửa {curApiBr?.operatingHours}</>
+          ) : (
+            <><b>{L.presentCount(db, br)}</b> người đang tập tại <b>{L.branchById(db, br)?.name}</b> · Giờ mở cửa {L.branchById(db, br)?.openTime}–{L.branchById(db, br)?.closeTime}</>
+          )}
+        </div>
       </div>
       <Scanner
         branchId={br}

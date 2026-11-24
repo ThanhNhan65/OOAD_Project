@@ -74,8 +74,11 @@ export function QrCameraScanner({
 
     const config = {
       fps: 10,
-      qrbox: { width: 220, height: 220 },
-      aspectRatio: 1.333,
+      qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+        const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+        const size = Math.max(150, Math.min(240, Math.floor(minEdge * 0.68)));
+        return { width: size, height: size };
+      },
     };
 
     const startScanner = async () => {
