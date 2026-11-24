@@ -2,7 +2,7 @@ name: CI-CD Backend (.NET 10 to EC2)
 
 on:
   push:
-    branches: ["Dang", "main"]
+    branches: ["main"]
     paths:
       - "backend/**"
       - ".github/workflows/deploy-backend.yml"
